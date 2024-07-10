@@ -80,3 +80,7 @@ void Flow::set_count(uint8_t count) {
 uint8_t Flow::get_count() {
     return count;
 }
+
+uint32_t Flow::get_size() {
+    return flow.size();
+}

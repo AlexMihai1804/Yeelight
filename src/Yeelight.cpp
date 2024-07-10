@@ -168,12 +168,6 @@ ResponseType Yeelight::set_default() {
 }
 
 ResponseType Yeelight::start_cf_command(uint8_t count, flow_action action, uint8_t size, flow_expression *flow) {
-    if (count < 0 || size <= 0) {
-        return ResponseType::INVALID_PARAMS;
-    }
-    if (!supported_methods.start_cf) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
-    }
     char params[1024] = "";
     char buffer[256];
     snprintf(buffer, sizeof(buffer), "[%d,%d,\"", count, action);
@@ -218,20 +212,20 @@ ResponseType Yeelight::set_scene_auto_delay_off_command(uint8_t brightness, uint
     return send_command("set_scene", params);
 }
 
-void Yeelight::set_scene_cf(uint32_t count, flow_action action, flow_expression *flow) {
+ResponseType Yeelight::set_scene_cf_command(uint32_t count, flow_action action, uint32_t size, flow_expression *flow) {
     char params[1024] = "";
     char buffer[256];
-    snprintf(buffer, sizeof(buffer), "[%d,%d,[", count, action);
+    snprintf(buffer, sizeof(buffer), R"(["cf",%d,%d,")", count, action);
     strncat(params, buffer, sizeof(params) - strlen(params) - 1);
-    for (int i = 0; i < count; i++) {
-        snprintf(buffer, sizeof(buffer), "[%d,%d,%d,%d],", flow[i].duration, flow[i].mode, flow[i].value,
+    for (int i = 0; i < size - 1; i++) {
+        snprintf(buffer, sizeof(buffer), "%d,%d,%d,%d,", flow[i].duration, flow[i].mode, flow[i].value,
                  flow[i].brightness);
         strncat(params, buffer, sizeof(params) - strlen(params) - 1);
     }
-    snprintf(buffer, sizeof(buffer), "[%d,%d,%d,%d]]", flow[count].duration, flow[count].mode, flow[count].value,
-             flow[count].brightness);
+    snprintf(buffer, sizeof(buffer), "%d,%d,%d,%d\"]", flow[size - 1].duration, flow[size - 1].mode,
+             flow[size - 1].value, flow[size - 1].brightness);
     strncat(params, buffer, sizeof(params) - strlen(params) - 1);
-    send_command("set_scene", params);
+    return send_command("set_scene", params);
 }
 
 ResponseType Yeelight::cron_add_command(uint32_t time) {
@@ -337,20 +331,21 @@ ResponseType Yeelight::bg_set_scene_auto_delay_off_command(uint8_t brightness, u
     return send_command("bg_set_scene", params);
 }
 
-void Yeelight::bg_set_scene_cf(uint32_t count, flow_action action, flow_expression *flow) {
+ResponseType
+Yeelight::bg_set_scene_cf_command(uint32_t count, flow_action action, uint32_t size, flow_expression *flow) {
     char params[1024] = "";
     char buffer[256];
-    snprintf(buffer, sizeof(buffer), "[%d,%d,[", count, action);
+    snprintf(buffer, sizeof(buffer), R"(["cf",%d,%d,")", count, action);
     strncat(params, buffer, sizeof(params) - strlen(params) - 1);
-    for (int i = 0; i < count; i++) {
-        snprintf(buffer, sizeof(buffer), "[%d,%d,%d,%d],", flow[i].duration, flow[i].mode, flow[i].value,
+    for (int i = 0; i < size - 1; i++) {
+        snprintf(buffer, sizeof(buffer), "%d,%d,%d,%d,", flow[i].duration, flow[i].mode, flow[i].value,
                  flow[i].brightness);
         strncat(params, buffer, sizeof(params) - strlen(params) - 1);
     }
-    snprintf(buffer, sizeof(buffer), "[%d,%d,%d,%d]]", flow[count].duration, flow[count].mode, flow[count].value,
-             flow[count].brightness);
+    snprintf(buffer, sizeof(buffer), "%d,%d,%d,%d\"]", flow[size - 1].duration, flow[size - 1].mode,
+             flow[size - 1].value, flow[size - 1].brightness);
     strncat(params, buffer, sizeof(params) - strlen(params) - 1);
-    send_command("bg_set_scene", params);
+    return send_command("bg_set_scene", params);
 }
 
 void Yeelight::bg_set_adjust(ajust_action action, ajust_prop prop) {
@@ -630,12 +625,71 @@ YeelightDevice Yeelight::parseDiscoveryResponse(const char *response) {
     return device;
 }
 
-ResponseType Yeelight::start_flow(Flow flow) {
-    return start_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_flow().size(), flow.get_flow().data());
+ResponseType Yeelight::start_flow(Flow flow, LightType lightType) {
+    if (!supported_methods.start_cf && !supported_methods.bg_start_cf) {
+        return ResponseType::METHOD_NOT_SUPPORTED;
+    }
+    if (flow.get_size() == 0) {
+        return ResponseType::INVALID_PARAMS;
+    }
+    if (flow.get_count() < 0) {
+        return ResponseType::INVALID_PARAMS;
+    }
+    if (lightType == AUTO) {
+        if (supported_methods.start_cf && supported_methods.bg_start_cf) {
+            ResponseType response = start_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(),
+                                                     flow.get_flow().data());
+            if (response != ResponseType::SUCCESS) {
+                return response;
+            }
+            return bg_start_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(), flow.get_flow().data());
+        } else if (supported_methods.start_cf) {
+            return start_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(), flow.get_flow().data());
+        } else {
+            return bg_start_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(), flow.get_flow().data());
+        }
+    } else if (lightType == MAIN_LIGHT) {
+        return start_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(), flow.get_flow().data());
+    } else if (lightType == BACKGROUND_LIGHT) {
+        return bg_start_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(), flow.get_flow().data());
+    } else if (lightType == BOTH) {
+        ResponseType response = start_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(),
+                                                 flow.get_flow().data());
+        if (response != ResponseType::SUCCESS) {
+            return response;
+        }
+        return bg_start_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(), flow.get_flow().data());
+    }
+    return ResponseType::ERROR;
 }
 
-ResponseType Yeelight::stop_flow() {
-    return stop_cf_command();
+ResponseType Yeelight::stop_flow(LightType lightType) {
+    if (!supported_methods.stop_cf && !supported_methods.bg_stop_cf) {
+        return ResponseType::METHOD_NOT_SUPPORTED;
+    }
+    if (lightType == AUTO) {
+        if (supported_methods.stop_cf && supported_methods.bg_stop_cf) {
+            ResponseType response = stop_cf_command();
+            if (response != ResponseType::SUCCESS) {
+                return response;
+            }
+            return bg_stop_cf_command();
+        } else if (supported_methods.stop_cf) {
+            return stop_cf_command();
+        } else {
+            return bg_stop_cf_command();
+        }
+    } else if (lightType == MAIN_LIGHT) {
+        return stop_cf_command();
+    } else if (lightType == BACKGROUND_LIGHT) {
+        return bg_stop_cf_command();
+    } else if (lightType == BOTH) {
+        ResponseType response = stop_cf_command();
+        if (response != ResponseType::SUCCESS) {
+            return response;
+        }
+        return bg_stop_cf_command();
+    }
 }
 
 ResponseType Yeelight::toggle_power(LightType lightType) {
@@ -1369,6 +1423,64 @@ ResponseType Yeelight::adjust_color(int8_t percentage, uint16_t duration, LightT
             return response;
         }
         return bg_adjust_color_command(percentage, duration);
+    }
+    return ResponseType::ERROR;
+}
+
+ResponseType Yeelight::bg_start_cf_command(uint8_t count, flow_action action, uint8_t size, flow_expression *flow) {
+    char params[1024] = "";
+    char buffer[256];
+    snprintf(buffer, sizeof(buffer), "[%d,%d,\"", count, action);
+    strncat(params, buffer, sizeof(params) - strlen(params) - 1);
+    for (int i = 0; i < size - 1; i++) {
+        snprintf(buffer, sizeof(buffer), "%d,%d,%d,%d,", flow[i].duration, flow[i].mode, flow[i].value,
+                 flow[i].brightness);
+        strncat(params, buffer, sizeof(params) - strlen(params) - 1);
+    }
+    snprintf(buffer, sizeof(buffer), "%d,%d,%d,%d\"]", flow[size - 1].duration, flow[size - 1].mode,
+             flow[size - 1].value, flow[size - 1].brightness);
+    strncat(params, buffer, sizeof(params) - strlen(params) - 1);
+    return send_command("bg_start_cf", params);
+}
+
+ResponseType Yeelight::bg_stop_cf_command() {
+    return send_command("bg_stop_cf", "");
+}
+
+ResponseType Yeelight::set_scene_flow(Flow flow, LightType lightType) {
+    if (!supported_methods.set_scene && !supported_methods.bg_set_scene) {
+        return ResponseType::METHOD_NOT_SUPPORTED;
+    }
+    if (flow.get_size() == 0) {
+        return ResponseType::INVALID_PARAMS;
+    }
+    if (flow.get_count() < 0) {
+        return ResponseType::INVALID_PARAMS;
+    }
+    if (lightType == AUTO) {
+        if (supported_methods.set_scene && supported_methods.bg_set_scene) {
+            ResponseType response = set_scene_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(),
+                                                         flow.get_flow().data());
+            if (response != ResponseType::SUCCESS) {
+                return response;
+            }
+            return bg_set_scene_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(), flow.get_flow().data());
+        } else if (supported_methods.set_scene) {
+            return set_scene_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(), flow.get_flow().data());
+        } else {
+            return bg_set_scene_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(), flow.get_flow().data());
+        }
+    } else if (lightType == MAIN_LIGHT) {
+        return set_scene_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(), flow.get_flow().data());
+    } else if (lightType == BACKGROUND_LIGHT) {
+        return bg_set_scene_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(), flow.get_flow().data());
+    } else if (lightType == BOTH) {
+        ResponseType response = set_scene_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(),
+                                                     flow.get_flow().data());
+        if (response != ResponseType::SUCCESS) {
+            return response;
+        }
+        return bg_set_scene_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(), flow.get_flow().data());
     }
     return ResponseType::ERROR;
 }

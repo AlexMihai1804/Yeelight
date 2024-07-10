@@ -546,6 +546,52 @@ private:
      */
     ResponseType bg_adjust_color_command(int8_t percentage, uint16_t duration);
 
+    /**
+     * Starts a color flow command in the background.
+     *
+     * This function sends a command to start a color flow in the background to the Yeelight device.
+     * The color flow is a series of predefined or custom light effects that can be played on the device.
+     *
+     * @param count The number of times the flow should be repeated. Use 0 to repeat indefinitely.
+     * @param action The action to be performed at the end of the flow.
+     * @param size The size of the flow expression array.
+     * @param flow An array of flow expressions that define the color flow.
+     *
+     * @return The response type indicating the success or failure of the command.
+     */
+    ResponseType bg_start_cf_command(uint8_t count, flow_action action, uint8_t size, flow_expression *flow);
+
+    /**
+     * Stops the color flow effect on the Yeelight device.
+     *
+     * @return The response type indicating the success or failure of the command.
+     */
+    ResponseType bg_stop_cf_command();
+
+    /**
+     * Sets the scene CF (Color Flow) command.
+     *
+     * This function allows you to set the scene CF command for controlling the Yeelight device's color flow.
+     *
+     * @param count The number of times the color flow should be executed.
+     * @param action The action to be performed in the color flow.
+     * @param size The size of the flow expression.
+     * @param flow A pointer to the flow expression array.
+     * @return The response type indicating the success or failure of the command.
+     */
+    ResponseType set_scene_cf_command(uint32_t count, flow_action action, uint32_t size, flow_expression *flow);
+
+    /**
+     * Sets the background light to a specific scene using the CF (Color Flow) command.
+     *
+     * @param count The total number of commands in the flow.
+     * @param action The action to be performed after the flow is executed.
+     * @param size The size of the flow expression.
+     * @param flow An array of flow expressions that define the flow.
+     * @return The response type indicating the success or failure of the command.
+     */
+    ResponseType bg_set_scene_cf_command(uint32_t count, flow_action action, uint32_t size, flow_expression *flow);
+
 public:
     /**
      * Discovers Yeelight devices on the network.
@@ -598,14 +644,14 @@ public:
      * @param flow The flow to be started.
      * @return The response type indicating the success or failure of the operation.
      */
-    ResponseType start_flow(Flow flow);
+    ResponseType start_flow(Flow flow, LightType lightType = AUTO);
 
     /**
      * Stops the flow effect on the Yeelight device.
      *
      * @return The response type indicating the success or failure of the operation.
      */
-    ResponseType stop_flow();
+    ResponseType stop_flow(LightType lightType = AUTO);
 
     /**
      * Sets the power state of the Yeelight device.
@@ -1141,11 +1187,19 @@ public:
      */
     ResponseType adjust_color(int8_t percentage, uint16_t duration, LightType lightType = AUTO);
 
-    void set_scene_cf(uint32_t count, flow_action action, flow_expression *flow);
+    /**
+     * Sets the scene flow for the Yeelight device.
+     *
+     * This function sets the scene flow for the Yeelight device. The scene flow determines the dynamic effect
+     * that the light will display, such as a gradual color change or a flashing effect.
+     *
+     * @param flow The flow object that describes the scene flow.
+     * @param lightType The type of light to apply the scene flow to. Defaults to AUTO, which applies the scene flow to all lights.
+     * @return The response type indicating the success or failure of the operation.
+     */
+    ResponseType set_scene_flow(Flow flow, LightType lightType = AUTO);
 
     void set_adjust(ajust_action action, ajust_prop prop);
-
-    void bg_set_scene_cf(uint32_t count, flow_action action, flow_expression *flow);
 
     void bg_set_adjust(ajust_action action, ajust_prop prop);
 };

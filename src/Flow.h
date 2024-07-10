@@ -139,6 +139,13 @@ public:
      * @return The number of times to repeat the flow.
      */
     uint8_t get_count();
+
+    /**
+     * @brief Returns the size of the object.
+     *
+     * @return The size of the object.
+     */
+    uint8_t get_size();
 };
 
 #endif
