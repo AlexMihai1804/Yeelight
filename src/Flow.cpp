@@ -81,6 +81,14 @@ uint8_t Flow::get_count() {
     return count;
 }
 
-uint32_t Flow::get_size() {
+uint8_t Flow::get_size() {
     return flow.size();
+}
+
+flow_action Flow::getAction() const {
+    return action;
+}
+
+void Flow::setAction(flow_action new_action) {
+    action = new_action;
 }

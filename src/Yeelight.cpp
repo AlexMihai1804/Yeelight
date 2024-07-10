@@ -637,28 +637,28 @@ ResponseType Yeelight::start_flow(Flow flow, LightType lightType) {
     }
     if (lightType == AUTO) {
         if (supported_methods.start_cf && supported_methods.bg_start_cf) {
-            ResponseType response = start_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(),
+            ResponseType response = start_cf_command(flow.get_count(), flow.getAction(), flow.get_size(),
                                                      flow.get_flow().data());
             if (response != ResponseType::SUCCESS) {
                 return response;
             }
-            return bg_start_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(), flow.get_flow().data());
+            return bg_start_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
         } else if (supported_methods.start_cf) {
-            return start_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(), flow.get_flow().data());
+            return start_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
         } else {
-            return bg_start_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(), flow.get_flow().data());
+            return bg_start_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
         }
     } else if (lightType == MAIN_LIGHT) {
-        return start_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(), flow.get_flow().data());
+        return start_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
     } else if (lightType == BACKGROUND_LIGHT) {
-        return bg_start_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(), flow.get_flow().data());
+        return bg_start_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
     } else if (lightType == BOTH) {
-        ResponseType response = start_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(),
+        ResponseType response = start_cf_command(flow.get_count(), flow.getAction(), flow.get_size(),
                                                  flow.get_flow().data());
         if (response != ResponseType::SUCCESS) {
             return response;
         }
-        return bg_start_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(), flow.get_flow().data());
+        return bg_start_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
     }
     return ResponseType::ERROR;
 }
@@ -690,6 +690,7 @@ ResponseType Yeelight::stop_flow(LightType lightType) {
         }
         return bg_stop_cf_command();
     }
+    return ResponseType::ERROR;
 }
 
 ResponseType Yeelight::toggle_power(LightType lightType) {
@@ -722,6 +723,7 @@ ResponseType Yeelight::toggle_power(LightType lightType) {
             return ResponseType::METHOD_NOT_SUPPORTED;
         }
     }
+    return ResponseType::ERROR;
 }
 
 ResponseType Yeelight::set_power(bool power, effect effect, uint16_t duration, mode mode, LightType lightType) {
@@ -755,6 +757,7 @@ ResponseType Yeelight::set_power(bool power, effect effect, uint16_t duration, m
         }
         return bg_set_power_command(power, effect, duration, mode);
     }
+    return ResponseType::ERROR;
 }
 
 ResponseType Yeelight::set_power(bool power) {
@@ -1459,28 +1462,28 @@ ResponseType Yeelight::set_scene_flow(Flow flow, LightType lightType) {
     }
     if (lightType == AUTO) {
         if (supported_methods.set_scene && supported_methods.bg_set_scene) {
-            ResponseType response = set_scene_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(),
+            ResponseType response = set_scene_cf_command(flow.get_count(), flow.getAction(), flow.get_size(),
                                                          flow.get_flow().data());
             if (response != ResponseType::SUCCESS) {
                 return response;
             }
-            return bg_set_scene_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(), flow.get_flow().data());
+            return bg_set_scene_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
         } else if (supported_methods.set_scene) {
-            return set_scene_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(), flow.get_flow().data());
+            return set_scene_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
         } else {
-            return bg_set_scene_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(), flow.get_flow().data());
+            return bg_set_scene_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
         }
     } else if (lightType == MAIN_LIGHT) {
-        return set_scene_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(), flow.get_flow().data());
+        return set_scene_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
     } else if (lightType == BACKGROUND_LIGHT) {
-        return bg_set_scene_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(), flow.get_flow().data());
+        return bg_set_scene_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
     } else if (lightType == BOTH) {
-        ResponseType response = set_scene_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(),
+        ResponseType response = set_scene_cf_command(flow.get_count(), flow.getAction(), flow.get_size(),
                                                      flow.get_flow().data());
         if (response != ResponseType::SUCCESS) {
             return response;
         }
-        return bg_set_scene_cf_command(flow.get_count(), FLOW_RECOVER, flow.get_size(), flow.get_flow().data());
+        return bg_set_scene_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
     }
     return ResponseType::ERROR;
 }

@@ -1,9 +1,11 @@
 #ifndef YEELIGHTARDUINO_FLOW_H
 #define YEELIGHTARDUINO_FLOW_H
 
-#include "Yeelight.h"
+#include "Yeelight_enums.h"
+#include "Yeelight_structs.h"
+#include <vector>
+#include <cstdint>
 
-struct flow_expression;
 /**
  * @class Flow
  * @brief Represents a flow of light effects for a Yeelight device.
@@ -16,6 +18,7 @@ class Flow {
 private:
     std::vector<flow_expression> flow; /**< The vector of flow expressions representing the sequence of light effects. */
     uint8_t count = 0; /**< The number of times the flow should be repeated. */
+    flow_action action = FLOW_RECOVER; /**< The action to be taken after the flow is completed. */
 public:
     /**
      * @brief Default constructor for the Flow class.
@@ -146,6 +149,10 @@ public:
      * @return The size of the object.
      */
     uint8_t get_size();
+
+    flow_action getAction() const;
+
+    void setAction(flow_action new_action);
 };
 
 #endif
