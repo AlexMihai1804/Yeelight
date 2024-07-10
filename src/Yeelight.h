@@ -444,14 +444,14 @@ public:
      * @param ip The IP address of the Yeelight device as an array of 4 bytes.
      * @param port The port number to connect to the Yeelight device. Default is 55443.
      */
-    Yeelight(const uint8_t ip[4], uint16_t port = 55443);
+    explicit Yeelight(const uint8_t ip[4], uint16_t port = 55443);
 
     /**
      * @brief Constructs a Yeelight object with the specified device.
      *
      * @param device The YeelightDevice object representing the device to connect to.
      */
-    Yeelight(const YeelightDevice &device);
+    explicit Yeelight(const YeelightDevice &device);
 
     /**
      * Retrieves the supported methods of the Yeelight device.
