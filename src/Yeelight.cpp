@@ -253,12 +253,6 @@ ResponseType Yeelight::set_name_command(const char *name) {
 }
 
 ResponseType Yeelight::bg_set_power_command(bool power, effect effect, uint16_t duration, mode mode) {
-    if (!supported_methods.bg_set_power) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
-    }
-    if (duration < 30) {
-        return ResponseType::INVALID_PARAMS;
-    }
     char params[256];
     if (mode == MODE_CURRENT) {
         snprintf(params, sizeof(params), R"(["%s","%s",%d])", power ? "on" : "off",
@@ -728,7 +722,6 @@ ResponseType Yeelight::toggle_power(LightType lightType) {
 
 ResponseType Yeelight::set_power(bool power, effect effect, uint16_t duration, mode mode, LightType lightType) {
     if (!supported_methods.set_power && !supported_methods.bg_set_power) {
-        Serial.println("set_power and bg_set_power methods are not supported.");
         return ResponseType::METHOD_NOT_SUPPORTED;
     }
     if (duration < 30) {
@@ -758,10 +751,6 @@ ResponseType Yeelight::set_power(bool power, effect effect, uint16_t duration, m
         return bg_set_power_command(power, effect, duration, mode);
     }
     return ResponseType::ERROR;
-}
-
-ResponseType Yeelight::set_power(bool power) {
-    return set_power(power, EFFECT_SMOOTH, 500, MODE_CURRENT, AUTO);
 }
 
 ResponseType Yeelight::set_power(bool power, LightType lightType) {

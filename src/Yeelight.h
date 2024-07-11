@@ -491,18 +491,10 @@ public:
      * Sets the power state of the Yeelight device.
      *
      * @param power The desired power state. Set to `true` to turn on the device, or `false` to turn it off.
-     * @return The response type indicating the success or failure of the operation.
-     */
-    ResponseType set_power(bool power);
-
-    /**
-     * Sets the power state of the Yeelight device.
-     *
-     * @param power The desired power state. Set to `true` to turn on the device, or `false` to turn it off.
      * @param lightType The type of light to control. Use the `LightType` enum to specify the light type.
      * @return The response type indicating the success or failure of the operation.
      */
-    ResponseType set_power(bool power, LightType lightType);
+    ResponseType set_power(bool power, LightType lightType = AUTO);
 
     /**
      * Sets the power state of the Yeelight device.
@@ -556,7 +548,7 @@ public:
      * @param lightType The type of light to control.
      * @return          The response type indicating the success or failure of the operation.
      */
-    ResponseType set_power(bool power, effect effect, uint16_t duration, mode mode, LightType lightType);
+    ResponseType set_power(bool power, effect effect, uint16_t duration, mode mode, LightType lightType = AUTO);
 
     /**
      * Toggles the power state of the Yeelight device.
