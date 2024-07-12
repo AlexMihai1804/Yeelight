@@ -1,5 +1,6 @@
 #include "Yeelight.h"
 #include <WiFiUdp.h>
+#include <cJSON.h>
 
 ResponseType Yeelight::checkResponse() {
     unsigned long startTime = millis();
@@ -1475,4 +1476,277 @@ ResponseType Yeelight::set_scene_flow(Flow flow, LightType lightType) {
         return bg_set_scene_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
     }
     return ResponseType::ERROR;
+}
+
+ResponseType Yeelight::refreshProperties() {
+    if (!supported_methods.get_prop) {
+        return ResponseType::METHOD_NOT_SUPPORTED;
+    }
+    char params[] = R"("power","bright","ct","rgb","hue","sat","color_mode","flowing","delayoff","music_on","name","bg_power","bg_flowing","bg_ct","bg_lmode","bg_bright","bg_rgb","bg_hue","bg_sat","nl_br","active_mode")";
+    uint8_t current_retries = 0;
+    while (!client.connected() && current_retries < max_retry) {
+        connect();
+        current_retries++;
+        delay(250);
+    }
+    if (client.connected()) {
+        char command[512];
+        snprintf(command, sizeof(command), "{\"id\":1,\"method\":\"get_prop\",\"params\":[%s]}\r\n", params);
+        client.print(command);
+        Serial.print("Sent command: ");
+        Serial.println(command);
+        unsigned long startTime = millis();
+        String response = "";
+        while (millis() - startTime < timeout) {
+            if (client.available()) {
+                response += client.readStringUntil('\r');
+                Serial.print("Response: ");
+                Serial.println(response);
+                cJSON *root = cJSON_Parse(response.c_str());
+                if (root == nullptr) {
+                    cJSON_Delete(root);
+                    return ResponseType::ERROR;
+                }
+                cJSON *result = cJSON_GetObjectItem(root, "result");
+                if (result == nullptr) {
+                    cJSON_Delete(root);
+                    return ResponseType::ERROR;
+                }
+                cJSON *power = cJSON_GetArrayItem(result, 0);
+                cJSON *bright = cJSON_GetArrayItem(result, 1);
+                cJSON *ct = cJSON_GetArrayItem(result, 2);
+                cJSON *rgb = cJSON_GetArrayItem(result, 3);
+                cJSON *hue = cJSON_GetArrayItem(result, 4);
+                cJSON *sat = cJSON_GetArrayItem(result, 5);
+                cJSON *color_mode = cJSON_GetArrayItem(result, 6);
+                cJSON *flowing = cJSON_GetArrayItem(result, 7);
+                cJSON *delayoff = cJSON_GetArrayItem(result, 8);
+                cJSON *music_on = cJSON_GetArrayItem(result, 9);
+                cJSON *name = cJSON_GetArrayItem(result, 10);
+                cJSON *bg_power = cJSON_GetArrayItem(result, 11);
+                cJSON *bg_flowing = cJSON_GetArrayItem(result, 12);
+                cJSON *bg_ct = cJSON_GetArrayItem(result, 13);
+                cJSON *bg_lmode = cJSON_GetArrayItem(result, 14);
+                cJSON *bg_bright = cJSON_GetArrayItem(result, 15);
+                cJSON *bg_rgb = cJSON_GetArrayItem(result, 16);
+                cJSON *bg_hue = cJSON_GetArrayItem(result, 17);
+                cJSON *bg_sat = cJSON_GetArrayItem(result, 18);
+                cJSON *nl_br = cJSON_GetArrayItem(result, 19);
+                cJSON *active_mode = cJSON_GetArrayItem(result, 20);
+                std::string power_str = cJSON_Print(power);
+                power_str.erase(0, 1);
+                power_str.erase(power_str.size() - 1);
+                if (power_str.empty()) {
+                    properties.power = false;
+                } else {
+                    if (power_str == "\"on\"") {
+                        properties.power = true;
+                    } else {
+                        properties.power = false;
+                    }
+                }
+                std::string bright_str = cJSON_Print(bright);
+                bright_str.erase(0, 1);
+                bright_str.erase(bright_str.size() - 1);
+                if (bright_str.empty()) {
+                    properties.bright = 0;
+                } else {
+                    properties.bright = std::stoi(bright_str);
+                }
+                std::string ct_str = cJSON_Print(ct);
+                ct_str.erase(0, 1);
+                ct_str.erase(ct_str.size() - 1);
+                if (ct_str.empty()) {
+                    properties.ct = 0;
+                } else {
+                    properties.ct = std::stoi(ct_str);
+                }
+                std::string rgb_str = cJSON_Print(rgb);
+                rgb_str.erase(0, 1);
+                rgb_str.erase(rgb_str.size() - 1);
+                if (rgb_str.empty()) {
+                    properties.rgb = 0;
+                } else {
+                    properties.rgb = std::stoi(rgb_str);
+                }
+                std::string hue_str = cJSON_Print(hue);
+                hue_str.erase(0, 1);
+                hue_str.erase(hue_str.size() - 1);
+                if (hue_str.empty()) {
+                    properties.hue = 0;
+                } else {
+                    properties.hue = std::stoi(hue_str);
+                }
+                std::string sat_str = cJSON_Print(sat);
+                sat_str.erase(0, 1);
+                sat_str.erase(sat_str.size() - 1);
+                if (sat_str.empty()) {
+                    properties.sat = 0;
+                } else {
+                    properties.sat = std::stoi(sat_str);
+                }
+                std::string color_mode_str = cJSON_Print(color_mode);
+                color_mode_str.erase(0, 1);
+                color_mode_str.erase(color_mode_str.size() - 1);
+                if (color_mode_str.empty()) {
+                    properties.color_mode = Color_mode::COLOR_MODE_UNKNOWN;
+                } else {
+                    uint8_t color_mode_int = std::stoi(color_mode_str);
+                    if (color_mode_int == 1) {
+                        properties.color_mode = Color_mode::COLOR_MODE_RGB;
+                    } else if (color_mode_int == 2) {
+                        properties.color_mode = Color_mode::COLOR_MODE_COLOR_TEMPERATURE;
+                    } else if (color_mode_int == 3) {
+                        properties.color_mode = Color_mode::COLOR_MODE_HSV;
+                    }
+                }
+                std::string flowing_str = cJSON_Print(flowing);
+                flowing_str.erase(0, 1);
+                flowing_str.erase(flowing_str.size() - 1);
+                if (flowing_str.empty()) {
+                    properties.flowing = false;
+                } else {
+                    if (flowing_str == "0") {
+                        properties.flowing = false;
+                    } else {
+                        properties.flowing = true;
+                    }
+                }
+                std::string delayoff_str = cJSON_Print(delayoff);
+                delayoff_str.erase(0, 1);
+                delayoff_str.erase(delayoff_str.size() - 1);
+                if (delayoff_str.empty()) {
+                    properties.delayoff = 0;
+                } else {
+                    properties.delayoff = std::stoi(delayoff_str);
+                }
+                std::string music_on_str = cJSON_Print(music_on);
+                music_on_str.erase(0, 1);
+                music_on_str.erase(music_on_str.size() - 1);
+                if (music_on_str.empty()) {
+                    properties.music_on = false;
+                } else {
+                    if (music_on_str == "1") {
+                        properties.music_on = true;
+                    } else {
+                        properties.music_on = false;
+                    }
+                }
+                std::string name_str = cJSON_Print(name);
+                name_str.erase(0, 1);
+                name_str.erase(name_str.size() - 1);
+                properties.name = name_str;
+                std::string bg_power_str = cJSON_Print(bg_power);
+                bg_power_str.erase(0, 1);
+                bg_power_str.erase(bg_power_str.size() - 1);
+                if (bg_power_str.empty()) {
+                    properties.bg_power = false;
+                } else {
+                    if (bg_power_str == "\"on\"") {
+                        properties.bg_power = true;
+                    } else {
+                        properties.bg_power = false;
+                    }
+                }
+                std::string bg_flowing_str = cJSON_Print(bg_flowing);
+                bg_flowing_str.erase(0, 1);
+                bg_flowing_str.erase(bg_flowing_str.size() - 1);
+                if (bg_flowing_str.empty()) {
+                    properties.bg_flowing = false;
+                } else {
+                    if (bg_flowing_str == "0") {
+                        properties.bg_flowing = false;
+                    } else {
+                        properties.bg_flowing = true;
+                    }
+                }
+                std::string bg_ct_str = cJSON_Print(bg_ct);
+                bg_ct_str.erase(0, 1);
+                bg_ct_str.erase(bg_ct_str.size() - 1);
+                if (bg_ct_str.empty()) {
+                    properties.bg_ct = 0;
+                } else {
+                    properties.bg_ct = std::stoi(bg_ct_str);
+                }
+                std::string bg_lmode_str = cJSON_Print(bg_lmode);
+                bg_lmode_str.erase(0, 1);
+                bg_lmode_str.erase(bg_lmode_str.size() - 1);
+                if (bg_lmode_str.empty()) {
+                    properties.bg_color_mode = Color_mode::COLOR_MODE_UNKNOWN;
+                } else {
+                    uint8_t bg_lmode_int = std::stoi(bg_lmode_str);
+                    if (bg_lmode_int == 1) {
+                        properties.bg_color_mode = Color_mode::COLOR_MODE_RGB;
+                    } else if (bg_lmode_int == 2) {
+                        properties.bg_color_mode = Color_mode::COLOR_MODE_COLOR_TEMPERATURE;
+                    } else if (bg_lmode_int == 3) {
+                        properties.bg_color_mode = Color_mode::COLOR_MODE_HSV;
+                    }
+                }
+                std::string bg_bright_str = cJSON_Print(bg_bright);
+                bg_bright_str.erase(0, 1);
+                bg_bright_str.erase(bg_bright_str.size() - 1);
+                if (bg_bright_str.empty()) {
+                    properties.bg_bright = 0;
+                } else {
+                    properties.bg_bright = std::stoi(bg_bright_str);
+                }
+                std::string bg_rgb_str = cJSON_Print(bg_rgb);
+                bg_rgb_str.erase(0, 1);
+                bg_rgb_str.erase(bg_rgb_str.size() - 1);
+                if (bg_rgb_str.empty()) {
+                    properties.bg_rgb = 0;
+                } else {
+                    properties.bg_rgb = std::stoi(bg_rgb_str);
+                }
+                std::string bg_hue_str = cJSON_Print(bg_hue);
+                bg_hue_str.erase(0, 1);
+                bg_hue_str.erase(bg_hue_str.size() - 1);
+                if (bg_hue_str.empty()) {
+                    properties.bg_hue = 0;
+                } else {
+                    properties.bg_hue = std::stoi(bg_hue_str);
+                }
+                std::string bg_sat_str = cJSON_Print(bg_sat);
+                bg_sat_str.erase(0, 1);
+                bg_sat_str.erase(bg_sat_str.size() - 1);
+                if (bg_sat_str.empty()) {
+                    properties.bg_sat = 0;
+                } else {
+                    properties.bg_sat = std::stoi(bg_sat_str);
+                }
+                std::string nl_br_str = cJSON_Print(nl_br);
+                nl_br_str.erase(0, 1);
+                nl_br_str.erase(nl_br_str.size() - 1);
+                if (nl_br_str.empty()) {
+                    properties.nl_br = 0;
+                } else {
+                    properties.nl_br = std::stoi(nl_br_str);
+                }
+                std::string active_mode_str = cJSON_Print(active_mode);
+                active_mode_str.erase(0, 1);
+                active_mode_str.erase(active_mode_str.size() - 1);
+                if (active_mode_str.empty()) {
+                    properties.active_mode = false;
+                } else {
+                    properties.active_mode = std::stoi(active_mode_str);
+                }
+                cJSON_Delete(root);
+                Serial.println("Properties refreshed.");
+                return ResponseType::SUCCESS;
+            }
+        }
+        if (response.length() == 0) {
+            Serial.println("No response from Yeelight device.");
+            return ResponseType::TIMEOUT;
+        }
+        return ResponseType::ERROR;
+    } else {
+        Serial.println("Not connected to any Yeelight device.");
+        return ResponseType::CONNECTION_LOST;
+    }
+}
+
+YeelightProperties Yeelight::getProperties() {
+    return properties;
 }

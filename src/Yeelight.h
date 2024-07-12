@@ -31,6 +31,7 @@ private:
     SupportedMethods supported_methods; // The supported methods of the Yeelight device
     uint16_t timeout = 1000; // The timeout value for communication with the device
     uint8_t max_retry = 3; // The maximum number of retries for failed commands
+    YeelightProperties properties; // The properties of the Yeelight device
     /**
      * Parses the discovery response and returns a YeelightDevice object.
      *
@@ -426,6 +427,7 @@ private:
      */
     ResponseType bg_set_scene_cf_command(uint32_t count, flow_action action, uint32_t size, flow_expression *flow);
 
+
 public:
     /**
      * Discovers Yeelight devices on the network.
@@ -466,6 +468,20 @@ public:
      * After calling this function, the list of supported methods can be accessed using the appropriate getter function.
      */
     void refreshSupportedMethods();
+
+    /**
+     * Refreshes the properties of the Yeelight device.
+     *
+     * @return The response type indicating the success or failure of the operation.
+     */
+    ResponseType refreshProperties();
+
+    /**
+     * Retrieves the properties of the Yeelight device.
+     *
+     * @return The YeelightProperties object containing the device properties.
+     */
+    YeelightProperties getProperties();
 
     /**
      * @brief Destructor for the Yeelight class.
