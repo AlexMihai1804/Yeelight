@@ -8,8 +8,6 @@ ResponseType Yeelight::checkResponse() {
     while (millis() - startTime < timeout) {
         if (client.available()) {
             response += client.readStringUntil('\r');
-            Serial.print("Response: ");
-            Serial.println(response);
             if (response.indexOf(R"("result":["ok"])") != -1) {
                 return ResponseType::SUCCESS;
             } else if (response.indexOf(R"("error")") != -1) {
@@ -20,7 +18,6 @@ ResponseType Yeelight::checkResponse() {
         }
     }
     if (response.length() == 0) {
-        Serial.println("No response from Yeelight device.");
         return ResponseType::TIMEOUT;
     }
     return ResponseType::ERROR;
@@ -55,12 +52,10 @@ void Yeelight::refreshSupportedMethods() {
             "MAN: \"ssdp:discover\"\r\n"
             "ST: wifi_bulb\r\n\r\n";
     if (!udp.begin(localUdpPort)) {
-        Serial.println("Failed to start UDP.");
     }
     udp.beginPacket(multicastIP, localUdpPort);
     udp.print(ssdpRequest);
     udp.endPacket();
-    Serial.println("Sent SSDP discovery request.");
     unsigned long startTime = millis();
     while (millis() - startTime < timeout) {
         int packetSize = udp.parsePacket();
@@ -69,8 +64,6 @@ void Yeelight::refreshSupportedMethods() {
             int len = udp.read(packetBuffer, sizeof(packetBuffer) - 1);
             if (len > 0) {
                 packetBuffer[len] = '\0';
-                Serial.println("Received a packet:");
-                Serial.println(packetBuffer);
                 YeelightDevice device = parseDiscoveryResponse(packetBuffer);
                 if (memcmp(device.ip, ip, sizeof(ip)) == 0) {
                     supported_methods = device.supported_methods;
@@ -87,11 +80,7 @@ Yeelight::~Yeelight() {
 }
 
 void Yeelight::connect() {
-    if (client.connect(ip, port)) {
-        Serial.println("Connected to Yeelight device.");
-    } else {
-        Serial.println("Failed to connect to Yeelight device.");
-    }
+    client.connect(ip, port);
 }
 
 ResponseType Yeelight::send_command(const char *method, const char *params) {
@@ -105,11 +94,8 @@ ResponseType Yeelight::send_command(const char *method, const char *params) {
         char command[256];
         snprintf(command, sizeof(command), "{\"id\":1,\"method\":\"%s\",\"params\":%s}\r\n", method, params);
         client.print(command);
-        Serial.print("Sent command: ");
-        Serial.println(command);
         return checkResponse();
     } else {
-        Serial.println("Not connected to any Yeelight device.");
         return ResponseType::CONNECTION_LOST;
     }
 }
@@ -408,14 +394,12 @@ std::vector<YeelightDevice> Yeelight::discoverYeelightDevices(int waitTimeMs) {
             "ST: wifi_bulb\r\n\r\n";
 
     if (!udp.begin(localUdpPort)) {
-        Serial.println("Failed to start UDP.");
         return {};
     }
     std::vector<YeelightDevice> devices;
     udp.beginPacket(multicastIP, localUdpPort);
     udp.print(ssdpRequest);
     udp.endPacket();
-    Serial.println("Sent SSDP discovery request.");
     unsigned long startTime = millis();
     while (millis() - startTime < waitTimeMs) {
         int packetSize = udp.parsePacket();
@@ -424,8 +408,6 @@ std::vector<YeelightDevice> Yeelight::discoverYeelightDevices(int waitTimeMs) {
             int len = udp.read(packetBuffer, sizeof(packetBuffer) - 1);
             if (len > 0) {
                 packetBuffer[len] = '\0';
-                Serial.println("Received a packet:");
-                Serial.println(packetBuffer);
                 YeelightDevice device = parseDiscoveryResponse(packetBuffer);
                 bool found = false;
                 for (YeelightDevice &d: devices) {
@@ -441,7 +423,6 @@ std::vector<YeelightDevice> Yeelight::discoverYeelightDevices(int waitTimeMs) {
         }
     }
     udp.stop();
-    Serial.println("Discovery finished.");
     return devices;
 }
 
@@ -1493,15 +1474,11 @@ ResponseType Yeelight::refreshProperties() {
         char command[512];
         snprintf(command, sizeof(command), "{\"id\":1,\"method\":\"get_prop\",\"params\":[%s]}\r\n", params);
         client.print(command);
-        Serial.print("Sent command: ");
-        Serial.println(command);
         unsigned long startTime = millis();
         String response = "";
         while (millis() - startTime < timeout) {
             if (client.available()) {
                 response += client.readStringUntil('\r');
-                Serial.print("Response: ");
-                Serial.println(response);
                 cJSON *root = cJSON_Parse(response.c_str());
                 if (root == nullptr) {
                     cJSON_Delete(root);
@@ -1732,17 +1709,14 @@ ResponseType Yeelight::refreshProperties() {
                     properties.active_mode = std::stoi(active_mode_str);
                 }
                 cJSON_Delete(root);
-                Serial.println("Properties refreshed.");
                 return ResponseType::SUCCESS;
             }
         }
         if (response.length() == 0) {
-            Serial.println("No response from Yeelight device.");
             return ResponseType::TIMEOUT;
         }
         return ResponseType::ERROR;
     } else {
-        Serial.println("Not connected to any Yeelight device.");
         return ResponseType::CONNECTION_LOST;
     }
 }
