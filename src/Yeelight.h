@@ -61,7 +61,7 @@ private:
     /**
      * Establishes a connection with the Yeelight device.
      */
-    void connect();
+    ResponseType connect();
 
     /**
      * Sends a command to the Yeelight device.
@@ -454,6 +454,37 @@ public:
      * @param device The YeelightDevice object representing the device to connect to.
      */
     explicit Yeelight(const YeelightDevice &device);
+
+    /**
+     * @brief Constructs a new Yeelight object.
+     */
+    Yeelight();
+
+    /**
+     * @brief Connects to the Yeelight device at the specified IP address and port.
+     *
+     * This function establishes a connection with the Yeelight device at the given IP address and port.
+     *
+     * @param ip The IP address of the Yeelight device as an array of 4 bytes.
+     * @param port The port number to connect to. The default value is 55443.
+     * @return The response type indicating the success or failure of the connection.
+     */
+    ResponseType connect(const uint8_t ip[4], uint16_t port = 55443);
+
+    /**
+     * Establishes a connection with the specified Yeelight device.
+     *
+     * @param device The Yeelight device to connect to.
+     * @return The response type indicating the success or failure of the connection.
+     */
+    ResponseType connect(const YeelightDevice &device);
+
+    /**
+     * Checks if the Yeelight device is connected.
+     *
+     * @return true if the device is connected, false otherwise.
+     */
+    bool is_connected();
 
     /**
      * Retrieves the supported methods of the Yeelight device.

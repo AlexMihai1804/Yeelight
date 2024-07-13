@@ -79,8 +79,13 @@ Yeelight::~Yeelight() {
     client.stop();
 }
 
-void Yeelight::connect() {
+ResponseType Yeelight::connect() {
     client.connect(ip, port);
+    if (client.connected()) {
+        return ResponseType::SUCCESS;
+    } else {
+        return ResponseType::CONNECTION_FAILED;
+    }
 }
 
 ResponseType Yeelight::send_command(const char *method, const char *params) {
@@ -1723,4 +1728,40 @@ ResponseType Yeelight::refreshProperties() {
 
 YeelightProperties Yeelight::getProperties() {
     return properties;
+}
+
+ResponseType Yeelight::connect(const uint8_t *ip, uint16_t port) {
+    if (client.connected()) {
+        client.stop();
+    }
+    for (uint8_t i = 0; i < 4; i++) {
+        this->ip[i] = ip[i];
+    }
+    this->port = port;
+    refreshSupportedMethods();
+    return connect();
+}
+
+ResponseType Yeelight::connect(const YeelightDevice &device) {
+    for (int i = 0; i < 4; ++i) {
+        this->ip[i] = device.ip[i];
+    }
+    this->port = device.port;
+    supported_methods = device.supported_methods;
+    return connect();
+}
+
+Yeelight::Yeelight() {
+    for (uint8_t &i: ip) {
+        i = 0;
+    }
+    port = 0;
+    timeout = 1000;
+    max_retry = 5;
+    supported_methods = {};
+    properties = {};
+}
+
+bool Yeelight::is_connected() {
+    return client.connected();
 }
