@@ -1,0 +1,159 @@
+#######################################
+# Syntax Coloring Map
+#######################################
+
+#######################################
+# Datatypes (KEYWORD1)
+#######################################
+Yeelight KEYWORD1
+Flow KEYWORD1
+YeelightDevice KEYWORD1
+YeelightProperties KEYWORD1
+SupportedMethods KEYWORD1
+flow_expression KEYWORD1
+ResponseType KEYWORD1
+LightType KEYWORD1
+Color_mode KEYWORD1
+ajust_action KEYWORD1
+ajust_prop KEYWORD1
+effect KEYWORD1
+mode KEYWORD1
+flow_mode KEYWORD1
+flow_action KEYWORD1
+
+#######################################
+# Methods and Functions (KEYWORD2)
+#######################################
+connect KEYWORD2
+is_connected KEYWORD2
+getSupportedMethods KEYWORD2
+refreshSupportedMethods KEYWORD2
+refreshProperties KEYWORD2
+getProperties KEYWORD2
+start_flow KEYWORD2
+stop_flow KEYWORD2
+set_power KEYWORD2
+toggle_power KEYWORD2
+turn_on KEYWORD2
+turn_off KEYWORD2
+set_color_temp KEYWORD2
+set_brightness KEYWORD2
+set_rgb_color KEYWORD2
+set_hsv_color KEYWORD2
+set_scene_rgb KEYWORD2
+set_scene_hsv KEYWORD2
+set_scene_color_temperature KEYWORD2
+set_scene_auto_delay_off KEYWORD2
+set_turn_off_delay KEYWORD2
+remove_turn_off_delay KEYWORD2
+set_default_state KEYWORD2
+set_device_name KEYWORD2
+adjust_brightness KEYWORD2
+adjust_color_temp KEYWORD2
+adjust_color KEYWORD2
+set_scene_flow KEYWORD2
+set_adjust KEYWORD2
+bg_set_adjust KEYWORD2
+discoverYeelightDevices KEYWORD2
+
+#######################################
+# Methods and Functions (KEYWORD2)
+#######################################
+add_rgb KEYWORD2
+add_rgb KEYWORD2
+add_ct KEYWORD2
+add_sleep KEYWORD2
+add_expression KEYWORD2
+get_flow KEYWORD2
+clear KEYWORD2
+remove_last KEYWORD2
+remove_first KEYWORD2
+remove_at KEYWORD2
+operator[] KEYWORD2
+operator+ KEYWORD2
+operator+ KEYWORD2
+operator+ KEYWORD2
+set_count KEYWORD2
+get_count KEYWORD2
+get_size KEYWORD2
+getAction KEYWORD2
+setAction KEYWORD2
+bg_set_power_command KEYWORD2
+set_power_command KEYWORD2
+bg_toggle_command KEYWORD2
+toggle_command KEYWORD2
+dev_toggle_command KEYWORD2
+checkResponse KEYWORD2
+set_ct_abx_command KEYWORD2
+set_scene_ct_command KEYWORD2
+bg_set_ct_abx_command KEYWORD2
+bg_set_scene_ct_command KEYWORD2
+set_scene_rgb_command KEYWORD2
+bg_set_rgb_command KEYWORD2
+bg_set_scene_rgb_command KEYWORD2
+set_rgb_command KEYWORD2
+set_bright_command KEYWORD2
+bg_set_bright_command KEYWORD2
+set_scene_hsv_command KEYWORD2
+set_hsv_command KEYWORD2
+bg_set_hsv_command KEYWORD2
+bg_set_scene_hsv_command KEYWORD2
+set_scene_auto_delay_off_command KEYWORD2
+bg_set_scene_auto_delay_off_command KEYWORD2
+cron_add_command KEYWORD2
+cron_del_command KEYWORD2
+set_default KEYWORD2
+bg_set_default KEYWORD2
+set_name_command KEYWORD2
+adjust_bright_command KEYWORD2
+adjust_ct_command KEYWORD2
+adjust_color_command KEYWORD2
+bg_adjust_bright_command KEYWORD2
+bg_adjust_ct_command KEYWORD2
+bg_adjust_color_command KEYWORD2
+bg_start_cf_command KEYWORD2
+bg_stop_cf_command KEYWORD2
+set_scene_cf_command KEYWORD2
+bg_set_scene_cf_command KEYWORD2
+parseDiscoveryResponse KEYWORD2
+
+#######################################
+# Constants (LITERAL1)
+#######################################
+EFFECT_SMOOTH LITERAL1
+EFFECT_SUDDEN LITERAL1
+MODE_CURRENT LITERAL1
+MODE_CT LITERAL1
+MODE_RGB LITERAL1
+MODE_HSV LITERAL1
+MODE_COLOR_FLOW LITERAL1
+MODE_NIGHT_LIGHT LITERAL1
+FLOW_COLOR LITERAL1
+FLOW_COLOR_TEMPERATURE LITERAL1
+FLOW_SLEEP LITERAL1
+FLOW_RECOVER LITERAL1
+FLOW_STAY LITERAL1
+FLOW_OFF LITERAL1
+ADJUST_INCREASE LITERAL1
+ADJUST_DECREASE LITERAL1
+ADJUST_CIRCLE LITERAL1
+ADJUST_BRIGHT LITERAL1
+ADJUST_CT LITERAL1
+ADJUST_COLOR LITERAL1
+SUCCESS LITERAL1
+DEVICE_NOT_FOUND LITERAL1
+METHOD_NOT_SUPPORTED LITERAL1
+INVALID_PARAMS LITERAL1
+ERROR LITERAL1
+UNEXPECTED_RESPONSE LITERAL1
+TIMEOUT LITERAL1
+CONNECTION_FAILED LITERAL1
+CONNECTION_LOST LITERAL1
+MAIN_LIGHT LITERAL1
+BACKGROUND_LIGHT LITERAL1
+BOTH LITERAL1
+AUTO LITERAL1
+COLOR_MODE_UNKNOWN LITERAL1
+COLOR_MODE_RGB LITERAL1
+COLOR_MODE_COLOR_TEMPERATURE LITERAL1
+COLOR_MODE_HSV LITERAL1
