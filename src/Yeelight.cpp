@@ -5,22 +5,38 @@
 ResponseType Yeelight::checkResponse() {
     unsigned long startTime = millis();
     String response = "";
-    while (millis() - startTime < timeout) {
-        if (client.available()) {
-            response += client.readStringUntil('\r');
-            if (response.indexOf(R"("result":["ok"])") != -1) {
-                return ResponseType::SUCCESS;
-            } else if (response.indexOf(R"("error")") != -1) {
-                return ResponseType::ERROR;
-            } else {
-                return ResponseType::UNEXPECTED_RESPONSE;
-            }
+    bool dataReceived = false;
+    // You can adjust the timeout as needed, for example:
+    // timeout = 3000; // 3 seconds
+    while ((millis() - startTime) < timeout) {
+        // Read all available data from the TCP buffer
+        while (client.available()) {
+            dataReceived = true;
+            String chunk = client.readString();
+            response += chunk;
         }
+        // If we received any data, let's check for "ok" or "error"
+        if (dataReceived) {
+            if (response.indexOf("\"result\":[\"ok\"]") != -1) {
+                // Serial.println("DEBUG: Received OK response.");
+                return ResponseType::SUCCESS;
+            } else if (response.indexOf("\"error\"") != -1) {
+                // Serial.println("DEBUG: Received ERROR response.");
+                return ResponseType::ERROR;
+            }
+            // If "result" or "error" not found yet, wait a bit more
+        }
+
+        delay(10);
     }
+    // If we reach here, no "ok" or "error" was found within the timeout
+    // Serial.println("DEBUG: Timeout or unexpected response, full response:");
+    // Serial.println(response);
     if (response.length() == 0) {
         return ResponseType::TIMEOUT;
+    } else {
+        return ResponseType::UNEXPECTED_RESPONSE;
     }
-    return ResponseType::ERROR;
 }
 
 Yeelight::Yeelight(const uint8_t ip[4], const uint16_t port) : port(port) {

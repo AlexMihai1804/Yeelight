@@ -29,7 +29,7 @@ private:
     uint16_t port; // The port number to connect to
     WiFiClient client; // The client object for establishing a connection
     SupportedMethods supported_methods; // The supported methods of the Yeelight device
-    uint16_t timeout = 1000; // The timeout value for communication with the device
+    uint16_t timeout = 5000; // The timeout value for communication with the device
     uint8_t max_retry = 3; // The maximum number of retries for failed commands
     YeelightProperties properties; // The properties of the Yeelight device
     /**
