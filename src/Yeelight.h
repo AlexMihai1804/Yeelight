@@ -427,7 +427,6 @@ private:
      */
     ResponseType bg_set_scene_cf_command(uint32_t count, flow_action action, uint32_t size, flow_expression *flow);
 
-
 public:
     /**
      * Discovers Yeelight devices on the network.
@@ -1075,6 +1074,10 @@ public:
     void set_adjust(ajust_action action, ajust_prop prop);
 
     void bg_set_adjust(ajust_action action, ajust_prop prop);
+
+    std::uint16_t get_timeout() const;
+
+    void set_timeout(std::uint16_t timeout);
 };
 
 #endif
