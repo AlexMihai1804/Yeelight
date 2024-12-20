@@ -50,7 +50,7 @@ private:
      * @param flow The flow expression.
      * @return The response type of the command.
      */
-    ResponseType start_cf_command(uint8_t count, flow_action action, uint8_t size, flow_expression *flow);
+    ResponseType start_cf_command(uint8_t count, flow_action action, uint8_t size, const flow_expression *flow);
 
     /**
      * Sends a stop_cf command to the Yeelight device.
@@ -396,7 +396,7 @@ private:
      *
      * @return The response type indicating the success or failure of the command.
      */
-    ResponseType bg_start_cf_command(uint8_t count, flow_action action, uint8_t size, flow_expression *flow);
+    ResponseType bg_start_cf_command(uint8_t count, flow_action action, uint8_t size, const flow_expression *flow);
 
     /**
      * Stops the color flow effect on the Yeelight device.
@@ -416,7 +416,7 @@ private:
      * @param flow A pointer to the flow expression array.
      * @return The response type indicating the success or failure of the command.
      */
-    ResponseType set_scene_cf_command(uint32_t count, flow_action action, uint32_t size, flow_expression *flow);
+    ResponseType set_scene_cf_command(uint32_t count, flow_action action, uint32_t size, const flow_expression *flow);
 
     /**
      * Sets the background light to a specific scene using the CF (Color Flow) command.
@@ -427,7 +427,7 @@ private:
      * @param flow An array of flow expressions that define the flow.
      * @return The response type indicating the success or failure of the command.
      */
-    ResponseType bg_set_scene_cf_command(uint32_t count, flow_action action, uint32_t size, flow_expression *flow);
+    ResponseType bg_set_scene_cf_command(uint32_t count, flow_action action, uint32_t size, const flow_expression *flow);
 
 public:
     /**
@@ -492,7 +492,7 @@ public:
      *
      * @return The supported methods as an instance of the SupportedMethods enum.
      */
-    SupportedMethods getSupportedMethods();
+    SupportedMethods getSupportedMethods() const;
 
     /**
      * Refreshes the list of supported methods for the Yeelight device.

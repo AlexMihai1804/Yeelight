@@ -3,36 +3,35 @@
 #include <cJSON.h>
 
 ResponseType Yeelight::checkResponse() {
-    unsigned long startTime = millis();
+    const unsigned long startTime = millis();
     String line;
-    while ((millis() - startTime) < timeout) {
+    while (millis() - startTime < timeout) {
         if (client.available()) {
             line = client.readStringUntil('\n');
             line.trim();
             if (line.length() > 0) {
                 cJSON *root = cJSON_Parse(line.c_str());
                 if (root) {
-                    cJSON *method = cJSON_GetObjectItem(root, "method");
-                    cJSON *result = cJSON_GetObjectItem(root, "result");
-                    cJSON *error = cJSON_GetObjectItem(root, "error");
+                    const cJSON *method = cJSON_GetObjectItem(root, "method");
+                    const cJSON *result = cJSON_GetObjectItem(root, "result");
+                    const cJSON *error = cJSON_GetObjectItem(root, "error");
                     if (method && strcmp(method->valuestring, "props") == 0) {
                         // TODO: Update properties
                         cJSON_Delete(root);
                         continue;
                     }
                     if (result && cJSON_IsArray(result)) {
-                        cJSON *firstItem = cJSON_GetArrayItem(result, 0);
+                        const cJSON *firstItem = cJSON_GetArrayItem(result, 0);
                         if (firstItem && cJSON_IsString(firstItem) && strcmp(firstItem->valuestring, "ok") == 0) {
                             cJSON_Delete(root);
-                            return ResponseType::SUCCESS;
-                        } else {
-                            cJSON_Delete(root);
-                            return ResponseType::UNEXPECTED_RESPONSE;
+                            return SUCCESS;
                         }
+                        cJSON_Delete(root);
+                        return UNEXPECTED_RESPONSE;
                     }
                     if (error) {
                         cJSON_Delete(root);
-                        return ResponseType::ERROR;
+                        return ERROR;
                     }
                     cJSON_Delete(root);
                 }
@@ -41,7 +40,7 @@ ResponseType Yeelight::checkResponse() {
             delay(10);
         }
     }
-    return ResponseType::TIMEOUT;
+    return TIMEOUT;
 }
 
 Yeelight::Yeelight(const uint8_t ip[4], const uint16_t port) : port(port) {
@@ -59,15 +58,15 @@ Yeelight::Yeelight(const YeelightDevice &device) : port(device.port), supported_
     connect();
 }
 
-SupportedMethods Yeelight::getSupportedMethods() {
+SupportedMethods Yeelight::getSupportedMethods() const {
     return supported_methods;
 }
 
 void Yeelight::refreshSupportedMethods() {
     WiFiUDP udp;
-    IPAddress multicastIP(239, 255, 255, 250);
-    unsigned int localUdpPort = 1982;
-    const char *ssdpRequest =
+    const IPAddress multicastIP(239, 255, 255, 250);
+    constexpr unsigned int localUdpPort = 1982;
+    const auto ssdpRequest =
             "M-SEARCH * HTTP/1.1\r\n"
             "HOST: 239.255.255.250:1982\r\n"
             "MAN: \"ssdp:discover\"\r\n"
@@ -77,15 +76,15 @@ void Yeelight::refreshSupportedMethods() {
     udp.beginPacket(multicastIP, localUdpPort);
     udp.print(ssdpRequest);
     udp.endPacket();
-    unsigned long startTime = millis();
+    const unsigned long startTime = millis();
     while (millis() - startTime < timeout) {
-        int packetSize = udp.parsePacket();
+        const int packetSize = udp.parsePacket();
         if (packetSize) {
             char packetBuffer[1024];
-            int len = udp.read(packetBuffer, sizeof(packetBuffer) - 1);
+            const int len = udp.read(packetBuffer, sizeof(packetBuffer) - 1);
             if (len > 0) {
                 packetBuffer[len] = '\0';
-                YeelightDevice device = parseDiscoveryResponse(packetBuffer);
+                const YeelightDevice device = parseDiscoveryResponse(packetBuffer);
                 if (memcmp(device.ip, ip, sizeof(ip)) == 0) {
                     supported_methods = device.supported_methods;
                     udp.stop();
@@ -103,10 +102,9 @@ Yeelight::~Yeelight() {
 ResponseType Yeelight::connect() {
     client.connect(ip, port);
     if (client.connected()) {
-        return ResponseType::SUCCESS;
-    } else {
-        return ResponseType::CONNECTION_FAILED;
+        return SUCCESS;
     }
+    return CONNECTION_FAILED;
 }
 
 ResponseType Yeelight::send_command(const char *method, cJSON *params) {
@@ -120,7 +118,7 @@ ResponseType Yeelight::send_command(const char *method, cJSON *params) {
         cJSON *root = cJSON_CreateObject();
         if (!root) {
             cJSON_Delete(params);
-            return ResponseType::ERROR;
+            return ERROR;
         }
         cJSON_AddNumberToObject(root, "id", 1);
         cJSON_AddStringToObject(root, "method", method);
@@ -128,28 +126,28 @@ ResponseType Yeelight::send_command(const char *method, cJSON *params) {
         char *command = cJSON_PrintUnformatted(root);
         if (command == nullptr) {
             cJSON_Delete(root);
-            return ResponseType::ERROR;
+            return ERROR;
         }
         client.print(command);
         cJSON_Delete(root);
         free(command);
         return checkResponse();
-    } else {
-        cJSON_Delete(params);
-        return ResponseType::CONNECTION_LOST;
     }
+    cJSON_Delete(params);
+    return CONNECTION_LOST;
 }
 
-ResponseType Yeelight::set_power_command(bool power, effect effect, uint16_t duration, mode mode) {
+ResponseType Yeelight::set_power_command(const bool power, const effect effect, const uint16_t duration,
+                                         const mode mode) {
     if (!supported_methods.set_power) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
     if (duration < 30) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateString(power ? "on" : "off"));
     cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
@@ -163,18 +161,18 @@ ResponseType Yeelight::set_power_command(bool power, effect effect, uint16_t dur
 ResponseType Yeelight::toggle_command() {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     return send_command("toggle", params);
 }
 
-ResponseType Yeelight::set_ct_abx_command(uint16_t ct_value, effect effect, uint16_t duration) {
+ResponseType Yeelight::set_ct_abx_command(const uint16_t ct_value, const effect effect, const uint16_t duration) {
     if (!supported_methods.set_ct_abx) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateNumber(ct_value));
     cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
@@ -182,11 +180,12 @@ ResponseType Yeelight::set_ct_abx_command(uint16_t ct_value, effect effect, uint
     return send_command("set_ct_abx", params);
 }
 
-ResponseType Yeelight::set_rgb_command(uint8_t r, uint8_t g, uint8_t b, effect effect, uint16_t duration) {
-    uint32_t rgb = (r << 16) | (g << 8) | b;
+ResponseType Yeelight::set_rgb_command(const uint8_t r, const uint8_t g, const uint8_t b, const effect effect,
+                                       const uint16_t duration) {
+    const uint32_t rgb = r << 16 | g << 8 | b;
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateNumber(rgb));
     cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
@@ -194,10 +193,11 @@ ResponseType Yeelight::set_rgb_command(uint8_t r, uint8_t g, uint8_t b, effect e
     return send_command("set_rgb", params);
 }
 
-ResponseType Yeelight::set_hsv_command(uint16_t hue, uint8_t sat, effect effect, uint16_t duration) {
+ResponseType Yeelight::set_hsv_command(const uint16_t hue, const uint8_t sat, const effect effect,
+                                       const uint16_t duration) {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateNumber(hue));
     cJSON_AddItemToArray(params, cJSON_CreateNumber(sat));
@@ -206,10 +206,10 @@ ResponseType Yeelight::set_hsv_command(uint16_t hue, uint8_t sat, effect effect,
     return send_command("set_hsv", params);
 }
 
-ResponseType Yeelight::set_bright_command(uint8_t bright, effect effect, uint16_t duration) {
+ResponseType Yeelight::set_bright_command(const uint8_t bright, const effect effect, const uint16_t duration) {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateNumber(bright));
     cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
@@ -220,15 +220,16 @@ ResponseType Yeelight::set_bright_command(uint8_t bright, effect effect, uint16_
 ResponseType Yeelight::set_default() {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     return send_command("set_default", params);
 }
 
-ResponseType Yeelight::start_cf_command(uint8_t count, flow_action action, uint8_t size, flow_expression *flow) {
+ResponseType Yeelight::start_cf_command(const uint8_t count, const flow_action action, const uint8_t size,
+                                        const flow_expression *flow) {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateNumber(count));
     cJSON_AddItemToArray(params, cJSON_CreateNumber(action));
@@ -245,16 +246,16 @@ ResponseType Yeelight::start_cf_command(uint8_t count, flow_action action, uint8
 ResponseType Yeelight::stop_cf_command() {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     return send_command("stop_cf", params);
 }
 
-ResponseType Yeelight::set_scene_rgb_command(uint8_t r, uint8_t g, uint8_t b, uint8_t bright) {
-    uint32_t rgb = (r << 16) | (g << 8) | b;
+ResponseType Yeelight::set_scene_rgb_command(const uint8_t r, const uint8_t g, const uint8_t b, const uint8_t bright) {
+    const uint32_t rgb = r << 16 | g << 8 | b;
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateString("color"));
     cJSON_AddItemToArray(params, cJSON_CreateNumber(rgb));
@@ -262,10 +263,10 @@ ResponseType Yeelight::set_scene_rgb_command(uint8_t r, uint8_t g, uint8_t b, ui
     return send_command("set_scene", params);
 }
 
-ResponseType Yeelight::set_scene_hsv_command(uint8_t hue, uint8_t sat, uint8_t bright) {
+ResponseType Yeelight::set_scene_hsv_command(const uint8_t hue, const uint8_t sat, const uint8_t bright) {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateString("hsv"));
     cJSON_AddItemToArray(params, cJSON_CreateNumber(hue));
@@ -274,10 +275,10 @@ ResponseType Yeelight::set_scene_hsv_command(uint8_t hue, uint8_t sat, uint8_t b
     return send_command("set_scene", params);
 }
 
-ResponseType Yeelight::set_scene_ct_command(uint16_t ct, uint8_t bright) {
+ResponseType Yeelight::set_scene_ct_command(const uint16_t ct, const uint8_t bright) {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateString("ct"));
     cJSON_AddItemToArray(params, cJSON_CreateNumber(ct));
@@ -285,10 +286,10 @@ ResponseType Yeelight::set_scene_ct_command(uint16_t ct, uint8_t bright) {
     return send_command("set_scene", params);
 }
 
-ResponseType Yeelight::set_scene_auto_delay_off_command(uint8_t brightness, uint32_t duration) {
+ResponseType Yeelight::set_scene_auto_delay_off_command(const uint8_t brightness, const uint32_t duration) {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateString("auto_delay_off"));
     cJSON_AddItemToArray(params, cJSON_CreateNumber(brightness));
@@ -296,10 +297,11 @@ ResponseType Yeelight::set_scene_auto_delay_off_command(uint8_t brightness, uint
     return send_command("set_scene", params);
 }
 
-ResponseType Yeelight::set_scene_cf_command(uint32_t count, flow_action action, uint32_t size, flow_expression *flow) {
+ResponseType Yeelight::set_scene_cf_command(const uint32_t count, const flow_action action, const uint32_t size,
+                                            const flow_expression *flow) {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateString("cf"));
     cJSON_AddItemToArray(params, cJSON_CreateNumber(count));
@@ -314,10 +316,10 @@ ResponseType Yeelight::set_scene_cf_command(uint32_t count, flow_action action, 
     return send_command("set_scene", params);
 }
 
-ResponseType Yeelight::cron_add_command(uint32_t time) {
+ResponseType Yeelight::cron_add_command(const uint32_t time) {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateNumber(time));
     return send_command("cron_add", params);
@@ -326,12 +328,12 @@ ResponseType Yeelight::cron_add_command(uint32_t time) {
 ResponseType Yeelight::cron_del_command() {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     return send_command("cron_del", params);
 }
 
-void Yeelight::set_adjust(ajust_action action, ajust_prop prop) {
+void Yeelight::set_adjust(const ajust_action action, const ajust_prop prop) {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
         return;
@@ -356,22 +358,23 @@ void Yeelight::set_adjust(ajust_action action, ajust_prop prop) {
 ResponseType Yeelight::set_name_command(const char *name) {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateString(name));
     return send_command("set_name", params);
 }
 
-ResponseType Yeelight::bg_set_power_command(bool power, effect effect, uint16_t duration, mode mode) {
+ResponseType Yeelight::bg_set_power_command(const bool power, const effect effect, const uint16_t duration,
+                                            const mode mode) {
     if (!supported_methods.bg_set_power) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
     if (duration < 30) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateString(power ? "on" : "off"));
     cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
@@ -385,18 +388,18 @@ ResponseType Yeelight::bg_set_power_command(bool power, effect effect, uint16_t 
 ResponseType Yeelight::bg_toggle_command() {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     return send_command("bg_toggle", params);
 }
 
-ResponseType Yeelight::bg_set_ct_abx_command(uint16_t ct_value, effect effect, uint16_t duration) {
+ResponseType Yeelight::bg_set_ct_abx_command(const uint16_t ct_value, const effect effect, const uint16_t duration) {
     if (!supported_methods.bg_set_ct_abx) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateNumber(ct_value));
     cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
@@ -404,11 +407,12 @@ ResponseType Yeelight::bg_set_ct_abx_command(uint16_t ct_value, effect effect, u
     return send_command("bg_set_ct_abx", params);
 }
 
-ResponseType Yeelight::bg_set_rgb_command(uint8_t r, uint8_t g, uint8_t b, effect effect, uint16_t duration) {
-    uint32_t rgb = (r << 16) | (g << 8) | b;
+ResponseType Yeelight::bg_set_rgb_command(const uint8_t r, const uint8_t g, const uint8_t b, const effect effect,
+                                          const uint16_t duration) {
+    const uint32_t rgb = r << 16 | g << 8 | b;
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateNumber(rgb));
     cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
@@ -416,10 +420,11 @@ ResponseType Yeelight::bg_set_rgb_command(uint8_t r, uint8_t g, uint8_t b, effec
     return send_command("bg_set_rgb", params);
 }
 
-ResponseType Yeelight::bg_set_hsv_command(uint16_t hue, uint8_t sat, effect effect, uint16_t duration) {
+ResponseType Yeelight::bg_set_hsv_command(const uint16_t hue, const uint8_t sat, const effect effect,
+                                          const uint16_t duration) {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateNumber(hue));
     cJSON_AddItemToArray(params, cJSON_CreateNumber(sat));
@@ -428,10 +433,10 @@ ResponseType Yeelight::bg_set_hsv_command(uint16_t hue, uint8_t sat, effect effe
     return send_command("bg_set_hsv", params);
 }
 
-ResponseType Yeelight::bg_set_bright_command(uint8_t bright, effect effect, uint16_t duration) {
+ResponseType Yeelight::bg_set_bright_command(const uint8_t bright, const effect effect, const uint16_t duration) {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateNumber(bright));
     cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
@@ -442,16 +447,17 @@ ResponseType Yeelight::bg_set_bright_command(uint8_t bright, effect effect, uint
 ResponseType Yeelight::bg_set_default() {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     return send_command("bg_set_default", params);
 }
 
-ResponseType Yeelight::bg_set_scene_rgb_command(uint8_t r, uint8_t g, uint8_t b, uint8_t bright) {
-    uint32_t rgb = (r << 16) | (g << 8) | b;
+ResponseType
+Yeelight::bg_set_scene_rgb_command(const uint8_t r, const uint8_t g, const uint8_t b, const uint8_t bright) {
+    const uint32_t rgb = r << 16 | g << 8 | b;
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateString("color"));
     cJSON_AddItemToArray(params, cJSON_CreateNumber(rgb));
@@ -459,10 +465,10 @@ ResponseType Yeelight::bg_set_scene_rgb_command(uint8_t r, uint8_t g, uint8_t b,
     return send_command("bg_set_scene", params);
 }
 
-ResponseType Yeelight::bg_set_scene_hsv_command(uint8_t hue, uint8_t sat, uint8_t bright) {
+ResponseType Yeelight::bg_set_scene_hsv_command(const uint8_t hue, const uint8_t sat, const uint8_t bright) {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateString("hsv"));
     cJSON_AddItemToArray(params, cJSON_CreateNumber(hue));
@@ -471,10 +477,10 @@ ResponseType Yeelight::bg_set_scene_hsv_command(uint8_t hue, uint8_t sat, uint8_
     return send_command("bg_set_scene", params);
 }
 
-ResponseType Yeelight::bg_set_scene_ct_command(uint16_t ct, uint8_t bright) {
+ResponseType Yeelight::bg_set_scene_ct_command(const uint16_t ct, const uint8_t bright) {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateString("ct"));
     cJSON_AddItemToArray(params, cJSON_CreateNumber(ct));
@@ -482,10 +488,10 @@ ResponseType Yeelight::bg_set_scene_ct_command(uint16_t ct, uint8_t bright) {
     return send_command("bg_set_scene", params);
 }
 
-ResponseType Yeelight::bg_set_scene_auto_delay_off_command(uint8_t brightness, uint32_t duration) {
+ResponseType Yeelight::bg_set_scene_auto_delay_off_command(const uint8_t brightness, const uint32_t duration) {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateString("auto_delay_off"));
     cJSON_AddItemToArray(params, cJSON_CreateNumber(brightness));
@@ -493,11 +499,11 @@ ResponseType Yeelight::bg_set_scene_auto_delay_off_command(uint8_t brightness, u
     return send_command("bg_set_scene", params);
 }
 
-ResponseType
-Yeelight::bg_set_scene_cf_command(uint32_t count, flow_action action, uint32_t size, flow_expression *flow) {
+ResponseType Yeelight::bg_set_scene_cf_command(const uint32_t count, const flow_action action, const uint32_t size,
+                                               const flow_expression *flow) {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateString("cf"));
     cJSON_AddItemToArray(params, cJSON_CreateNumber(count));
@@ -511,7 +517,7 @@ Yeelight::bg_set_scene_cf_command(uint32_t count, flow_action action, uint32_t s
     return send_command("bg_set_scene", params);
 }
 
-void Yeelight::bg_set_adjust(ajust_action action, ajust_prop prop) {
+void Yeelight::bg_set_adjust(const ajust_action action, const ajust_prop prop) {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
         return;
@@ -536,65 +542,65 @@ void Yeelight::bg_set_adjust(ajust_action action, ajust_prop prop) {
 ResponseType Yeelight::dev_toggle_command() {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     return send_command("dev_toggle", params);
 }
 
-ResponseType Yeelight::adjust_bright_command(int8_t percentage, uint16_t duration) {
+ResponseType Yeelight::adjust_bright_command(const int8_t percentage, const uint16_t duration) {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateNumber(percentage));
     cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
     return send_command("adjust_bright", params);
 }
 
-ResponseType Yeelight::adjust_ct_command(int8_t percentage, uint16_t duration) {
+ResponseType Yeelight::adjust_ct_command(const int8_t percentage, const uint16_t duration) {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateNumber(percentage));
     cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
     return send_command("adjust_ct", params);
 }
 
-ResponseType Yeelight::adjust_color_command(int8_t percentage, uint16_t duration) {
+ResponseType Yeelight::adjust_color_command(const int8_t percentage, const uint16_t duration) {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateNumber(percentage));
     cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
     return send_command("adjust_color", params);
 }
 
-ResponseType Yeelight::bg_adjust_bright_command(int8_t percentage, uint16_t duration) {
+ResponseType Yeelight::bg_adjust_bright_command(const int8_t percentage, const uint16_t duration) {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateNumber(percentage));
     cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
     return send_command("bg_adjust_bright", params);
 }
 
-ResponseType Yeelight::bg_adjust_ct_command(int8_t percentage, uint16_t duration) {
+ResponseType Yeelight::bg_adjust_ct_command(const int8_t percentage, const uint16_t duration) {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateNumber(percentage));
     cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
     return send_command("bg_adjust_ct", params);
 }
 
-ResponseType Yeelight::bg_adjust_color_command(int8_t percentage, uint16_t duration) {
+ResponseType Yeelight::bg_adjust_color_command(const int8_t percentage, const uint16_t duration) {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateNumber(percentage));
     cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
@@ -605,7 +611,7 @@ std::vector<YeelightDevice> Yeelight::discoverYeelightDevices(int waitTimeMs) {
     WiFiUDP udp;
     IPAddress multicastIP(239, 255, 255, 250);
     unsigned int localUdpPort = 1982;
-    const char *ssdpRequest =
+    auto ssdpRequest =
             "M-SEARCH * HTTP/1.1\r\n"
             "HOST: 239.255.255.250:1982\r\n"
             "MAN: \"ssdp:discover\"\r\n"
@@ -619,7 +625,7 @@ std::vector<YeelightDevice> Yeelight::discoverYeelightDevices(int waitTimeMs) {
     udp.print(ssdpRequest);
     udp.endPacket();
     unsigned long startTime = millis();
-    while (millis() - startTime < (unsigned long) waitTimeMs) {
+    while (millis() - startTime < static_cast<unsigned long>(waitTimeMs)) {
         int packetSize = udp.parsePacket();
         if (packetSize) {
             char packetBuffer[1024];
@@ -670,7 +676,7 @@ YeelightDevice Yeelight::parseDiscoveryResponse(const char *response) {
         power += strlen("\r\npower: ");
         char powerStr[8];
         sscanf(power, "%7s", powerStr);
-        device.power = (strcmp(powerStr, "on") == 0);
+        device.power = strcmp(powerStr, "on") == 0;
     }
     const char *bright = strstr(response, "\r\nbright: ");
     if (bright) {
@@ -819,678 +825,738 @@ YeelightDevice Yeelight::parseDiscoveryResponse(const char *response) {
     return device;
 }
 
-ResponseType Yeelight::start_flow(Flow flow, LightType lightType) {
+ResponseType Yeelight::start_flow(Flow flow, const LightType lightType) {
     if (!supported_methods.start_cf && !supported_methods.bg_start_cf) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
     if (flow.get_size() == 0) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (flow.get_count() < 0) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (lightType == AUTO) {
         if (supported_methods.start_cf && supported_methods.bg_start_cf) {
-            ResponseType response = start_cf_command(flow.get_count(), flow.getAction(), flow.get_size(),
-                                                     flow.get_flow().data());
-            if (response != ResponseType::SUCCESS) {
+            const ResponseType response = start_cf_command(flow.get_count(), flow.getAction(), flow.get_size(),
+                                                           flow.get_flow().data());
+            if (response != SUCCESS) {
                 return response;
             }
             return bg_start_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
-        } else if (supported_methods.start_cf) {
-            return start_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
-        } else {
-            return bg_start_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
         }
-    } else if (lightType == MAIN_LIGHT) {
-        return start_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
-    } else if (lightType == BACKGROUND_LIGHT) {
+        if (supported_methods.start_cf) {
+            return start_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
+        }
         return bg_start_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
-    } else if (lightType == BOTH) {
-        ResponseType response = start_cf_command(flow.get_count(), flow.getAction(), flow.get_size(),
-                                                 flow.get_flow().data());
-        if (response != ResponseType::SUCCESS) {
+    }
+    if (lightType == MAIN_LIGHT) {
+        return start_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
+    }
+    if (lightType == BACKGROUND_LIGHT) {
+        return bg_start_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
+    }
+    if (lightType == BOTH) {
+        const ResponseType response = start_cf_command(flow.get_count(), flow.getAction(), flow.get_size(),
+                                                       flow.get_flow().data());
+        if (response != SUCCESS) {
             return response;
         }
         return bg_start_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
     }
-    return ResponseType::ERROR;
+    return ERROR;
 }
 
-ResponseType Yeelight::stop_flow(LightType lightType) {
+ResponseType Yeelight::stop_flow(const LightType lightType) {
     if (!supported_methods.stop_cf && !supported_methods.bg_stop_cf) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
     if (lightType == AUTO) {
         if (supported_methods.stop_cf && supported_methods.bg_stop_cf) {
-            ResponseType response = stop_cf_command();
-            if (response != ResponseType::SUCCESS) {
+            const ResponseType response = stop_cf_command();
+            if (response != SUCCESS) {
                 return response;
             }
             return bg_stop_cf_command();
-        } else if (supported_methods.stop_cf) {
-            return stop_cf_command();
-        } else {
-            return bg_stop_cf_command();
         }
-    } else if (lightType == MAIN_LIGHT) {
-        return stop_cf_command();
-    } else if (lightType == BACKGROUND_LIGHT) {
+        if (supported_methods.stop_cf) {
+            return stop_cf_command();
+        }
         return bg_stop_cf_command();
-    } else if (lightType == BOTH) {
-        ResponseType response = stop_cf_command();
-        if (response != ResponseType::SUCCESS) {
+    }
+    if (lightType == MAIN_LIGHT) {
+        return stop_cf_command();
+    }
+    if (lightType == BACKGROUND_LIGHT) {
+        return bg_stop_cf_command();
+    }
+    if (lightType == BOTH) {
+        const ResponseType response = stop_cf_command();
+        if (response != SUCCESS) {
             return response;
         }
         return bg_stop_cf_command();
     }
-    return ResponseType::ERROR;
+    return ERROR;
 }
 
-ResponseType Yeelight::toggle_power(LightType lightType) {
+ResponseType Yeelight::toggle_power(const LightType lightType) {
     if (lightType == AUTO) {
         if (supported_methods.toggle && supported_methods.bg_toggle) {
             return dev_toggle_command();
-        } else if (supported_methods.toggle) {
-            return toggle_command();
-        } else if (supported_methods.bg_toggle) {
-            return bg_toggle_command();
-        } else {
-            return ResponseType::METHOD_NOT_SUPPORTED;
         }
-    } else if (lightType == MAIN_LIGHT) {
         if (supported_methods.toggle) {
             return toggle_command();
-        } else {
-            return ResponseType::METHOD_NOT_SUPPORTED;
         }
-    } else if (lightType == BACKGROUND_LIGHT) {
         if (supported_methods.bg_toggle) {
             return bg_toggle_command();
-        } else {
-            return ResponseType::METHOD_NOT_SUPPORTED;
         }
-    } else if (lightType == BOTH) {
+        return METHOD_NOT_SUPPORTED;
+    }
+    if (lightType == MAIN_LIGHT) {
+        if (supported_methods.toggle) {
+            return toggle_command();
+        }
+        return METHOD_NOT_SUPPORTED;
+    }
+    if (lightType == BACKGROUND_LIGHT) {
+        if (supported_methods.bg_toggle) {
+            return bg_toggle_command();
+        }
+        return METHOD_NOT_SUPPORTED;
+    }
+    if (lightType == BOTH) {
         if (supported_methods.toggle && supported_methods.bg_toggle) {
             return dev_toggle_command();
-        } else {
-            return ResponseType::METHOD_NOT_SUPPORTED;
         }
+        return METHOD_NOT_SUPPORTED;
     }
-    return ResponseType::ERROR;
+    return ERROR;
 }
 
-ResponseType Yeelight::set_power(bool power, effect effect, uint16_t duration, mode mode, LightType lightType) {
+ResponseType Yeelight::set_power(const bool power, const effect effect, const uint16_t duration, const mode mode,
+                                 const LightType lightType) {
     if (!supported_methods.set_power && !supported_methods.bg_set_power) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
     if (duration < 30) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (lightType == AUTO) {
         if (supported_methods.set_power && supported_methods.bg_set_power) {
-            ResponseType response = set_power_command(power, effect, duration, mode);
-            if (response != ResponseType::SUCCESS) {
+            const ResponseType response = set_power_command(power, effect, duration, mode);
+            if (response != SUCCESS) {
                 return response;
             }
             return bg_set_power_command(power, effect, duration, mode);
-        } else if (supported_methods.set_power) {
-            return set_power_command(power, effect, duration, mode);
-        } else {
-            return bg_set_power_command(power, effect, duration, mode);
         }
-    } else if (lightType == MAIN_LIGHT) {
-        return set_power_command(power, effect, duration, mode);
-    } else if (lightType == BACKGROUND_LIGHT) {
+        if (supported_methods.set_power) {
+            return set_power_command(power, effect, duration, mode);
+        }
         return bg_set_power_command(power, effect, duration, mode);
-    } else if (lightType == BOTH) {
-        ResponseType response = set_power_command(power, effect, duration, mode);
-        if (response != ResponseType::SUCCESS) {
+    }
+    if (lightType == MAIN_LIGHT) {
+        return set_power_command(power, effect, duration, mode);
+    }
+    if (lightType == BACKGROUND_LIGHT) {
+        return bg_set_power_command(power, effect, duration, mode);
+    }
+    if (lightType == BOTH) {
+        const ResponseType response = set_power_command(power, effect, duration, mode);
+        if (response != SUCCESS) {
             return response;
         }
         return bg_set_power_command(power, effect, duration, mode);
     }
-    return ResponseType::ERROR;
+    return ERROR;
 }
 
-ResponseType Yeelight::set_power(bool power, LightType lightType) {
+ResponseType Yeelight::set_power(const bool power, const LightType lightType) {
     return set_power(power, EFFECT_SMOOTH, 500, MODE_CURRENT, lightType);
 }
 
-ResponseType Yeelight::set_power(bool power, effect effect, LightType lightType) {
+ResponseType Yeelight::set_power(const bool power, const effect effect, const LightType lightType) {
     return set_power(power, effect, 500, MODE_CURRENT, lightType);
 }
 
-ResponseType Yeelight::set_power(bool power, effect effect, uint16_t duration, LightType lightType) {
+ResponseType Yeelight::set_power(const bool power, const effect effect, const uint16_t duration,
+                                 const LightType lightType) {
     return set_power(power, effect, duration, MODE_CURRENT, lightType);
 }
 
-ResponseType Yeelight::set_power(bool power, mode mode, LightType lightType) {
+ResponseType Yeelight::set_power(const bool power, const mode mode, const LightType lightType) {
     return set_power(power, EFFECT_SMOOTH, 500, mode, lightType);
 }
 
-ResponseType Yeelight::set_power(bool power, effect effect, mode mode, LightType lightType) {
+ResponseType Yeelight::set_power(const bool power, const effect effect, const mode mode, const LightType lightType) {
     return set_power(power, effect, 500, mode, lightType);
 }
 
-ResponseType Yeelight::turn_on(LightType lightType) {
+ResponseType Yeelight::turn_on(const LightType lightType) {
     return set_power(true, EFFECT_SMOOTH, 500, MODE_CURRENT, lightType);
 }
 
-ResponseType Yeelight::turn_on(effect effect, LightType lightType) {
+ResponseType Yeelight::turn_on(const effect effect, const LightType lightType) {
     return set_power(true, effect, 500, MODE_CURRENT, lightType);
 }
 
-ResponseType Yeelight::turn_on(effect effect, uint16_t duration, LightType lightType) {
+ResponseType Yeelight::turn_on(const effect effect, const uint16_t duration, const LightType lightType) {
     return set_power(true, effect, duration, MODE_CURRENT, lightType);
 }
 
-ResponseType Yeelight::turn_on(mode mode, LightType lightType) {
+ResponseType Yeelight::turn_on(const mode mode, const LightType lightType) {
     return set_power(true, EFFECT_SMOOTH, 500, mode, lightType);
 }
 
-ResponseType Yeelight::turn_on(effect effect, mode mode, LightType lightType) {
+ResponseType Yeelight::turn_on(const effect effect, const mode mode, const LightType lightType) {
     return set_power(true, effect, 500, mode, lightType);
 }
 
-ResponseType Yeelight::turn_on(effect effect, uint16_t duration, mode mode, LightType lightType) {
+ResponseType Yeelight::turn_on(const effect effect, const uint16_t duration, const mode mode,
+                               const LightType lightType) {
     return set_power(true, effect, duration, mode, lightType);
 }
 
-ResponseType Yeelight::turn_off(LightType lightType) {
+ResponseType Yeelight::turn_off(const LightType lightType) {
     return set_power(false, EFFECT_SMOOTH, 500, MODE_CURRENT, lightType);
 }
 
-ResponseType Yeelight::turn_off(effect effect, LightType lightType) {
+ResponseType Yeelight::turn_off(const effect effect, const LightType lightType) {
     return set_power(false, effect, 500, MODE_CURRENT, lightType);
 }
 
-ResponseType Yeelight::turn_off(effect effect, uint16_t duration, LightType lightType) {
+ResponseType Yeelight::turn_off(const effect effect, const uint16_t duration, const LightType lightType) {
     return set_power(false, effect, duration, MODE_CURRENT, lightType);
 }
 
-ResponseType Yeelight::turn_off(mode mode, LightType lightType) {
+ResponseType Yeelight::turn_off(const mode mode, const LightType lightType) {
     return set_power(false, EFFECT_SMOOTH, 500, mode, lightType);
 }
 
-ResponseType Yeelight::turn_off(effect effect, mode mode, LightType lightType) {
+ResponseType Yeelight::turn_off(const effect effect, const mode mode, const LightType lightType) {
     return set_power(false, effect, 500, mode, lightType);
 }
 
-ResponseType Yeelight::turn_off(effect effect, uint16_t duration, mode mode, LightType lightType) {
+ResponseType Yeelight::turn_off(const effect effect, const uint16_t duration, const mode mode,
+                                const LightType lightType) {
     return set_power(false, effect, duration, mode, lightType);
 }
 
-ResponseType Yeelight::set_color_temp(uint16_t ct_value, LightType lightType) {
+ResponseType Yeelight::set_color_temp(const uint16_t ct_value, const LightType lightType) {
     return set_color_temp(ct_value, EFFECT_SMOOTH, 500, lightType);
 }
 
-ResponseType Yeelight::set_color_temp(uint16_t ct_value, effect effect, uint16_t duration, LightType lightType) {
+ResponseType Yeelight::set_color_temp(const uint16_t ct_value, const effect effect, const uint16_t duration,
+                                      const LightType lightType) {
     if (ct_value < 1700 || ct_value > 6500) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (!supported_methods.set_ct_abx && !supported_methods.bg_set_ct_abx) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
     if (lightType == AUTO) {
         if (supported_methods.set_ct_abx && supported_methods.bg_set_ct_abx) {
-            ResponseType response = set_ct_abx_command(ct_value, effect, duration);
-            if (response != ResponseType::SUCCESS) {
+            const ResponseType response = set_ct_abx_command(ct_value, effect, duration);
+            if (response != SUCCESS) {
                 return response;
             }
             return bg_set_ct_abx_command(ct_value, effect, duration);
-        } else if (supported_methods.set_ct_abx) {
-            return set_ct_abx_command(ct_value, effect, duration);
-        } else {
-            return bg_set_ct_abx_command(ct_value, effect, duration);
         }
-    } else if (lightType == MAIN_LIGHT) {
-        return set_ct_abx_command(ct_value, effect, duration);
-    } else if (lightType == BACKGROUND_LIGHT) {
+        if (supported_methods.set_ct_abx) {
+            return set_ct_abx_command(ct_value, effect, duration);
+        }
         return bg_set_ct_abx_command(ct_value, effect, duration);
-    } else if (lightType == BOTH) {
-        ResponseType response = set_ct_abx_command(ct_value, effect, duration);
-        if (response != ResponseType::SUCCESS) {
+    }
+    if (lightType == MAIN_LIGHT) {
+        return set_ct_abx_command(ct_value, effect, duration);
+    }
+    if (lightType == BACKGROUND_LIGHT) {
+        return bg_set_ct_abx_command(ct_value, effect, duration);
+    }
+    if (lightType == BOTH) {
+        const ResponseType response = set_ct_abx_command(ct_value, effect, duration);
+        if (response != SUCCESS) {
             return response;
         }
         return bg_set_ct_abx_command(ct_value, effect, duration);
     }
-    return ResponseType::ERROR;
+    return ERROR;
 }
 
-ResponseType Yeelight::set_color_temp(uint16_t ct_value, effect effect, LightType lightType) {
+ResponseType Yeelight::set_color_temp(const uint16_t ct_value, const effect effect, const LightType lightType) {
     return set_color_temp(ct_value, effect, 500, lightType);
 }
 
-ResponseType Yeelight::set_color_temp(uint16_t ct_value, uint8_t bright, LightType lightType) {
+ResponseType Yeelight::set_color_temp(const uint16_t ct_value, const uint8_t bright, const LightType lightType) {
     if (ct_value < 1700 || ct_value > 6500) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (bright < 1 || bright > 100) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (!supported_methods.set_scene && !supported_methods.bg_set_scene) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
     if (lightType == AUTO) {
         if (supported_methods.set_scene && supported_methods.bg_set_scene) {
-            ResponseType response = set_scene_ct_command(ct_value, bright);
-            if (response != ResponseType::SUCCESS) {
+            const ResponseType response = set_scene_ct_command(ct_value, bright);
+            if (response != SUCCESS) {
                 return response;
             }
             return bg_set_scene_ct_command(ct_value, bright);
-        } else if (supported_methods.set_scene) {
-            return set_scene_ct_command(ct_value, bright);
-        } else {
-            return bg_set_scene_ct_command(ct_value, bright);
         }
-    } else if (lightType == MAIN_LIGHT) {
-        return set_scene_ct_command(ct_value, bright);
-    } else if (lightType == BACKGROUND_LIGHT) {
+        if (supported_methods.set_scene) {
+            return set_scene_ct_command(ct_value, bright);
+        }
         return bg_set_scene_ct_command(ct_value, bright);
-    } else if (lightType == BOTH) {
-        ResponseType response = set_scene_ct_command(ct_value, bright);
-        if (response != ResponseType::SUCCESS) {
+    }
+    if (lightType == MAIN_LIGHT) {
+        return set_scene_ct_command(ct_value, bright);
+    }
+    if (lightType == BACKGROUND_LIGHT) {
+        return bg_set_scene_ct_command(ct_value, bright);
+    }
+    if (lightType == BOTH) {
+        const ResponseType response = set_scene_ct_command(ct_value, bright);
+        if (response != SUCCESS) {
             return response;
         }
         return bg_set_scene_ct_command(ct_value, bright);
     }
-    return ResponseType::ERROR;
+    return ERROR;
 }
 
-ResponseType Yeelight::set_rgb_color(uint8_t r, uint8_t g, uint8_t b, LightType lightType) {
+ResponseType Yeelight::set_rgb_color(const uint8_t r, const uint8_t g, const uint8_t b, const LightType lightType) {
     return set_rgb_color(r, g, b, EFFECT_SMOOTH, 500, lightType);
 }
 
-ResponseType Yeelight::set_rgb_color(uint8_t r, uint8_t g, uint8_t b, effect effect, LightType lightType) {
+ResponseType Yeelight::set_rgb_color(const uint8_t r, const uint8_t g, const uint8_t b, const effect effect,
+                                     const LightType lightType) {
     return set_rgb_color(r, g, b, effect, 500, lightType);
 }
 
-ResponseType
-Yeelight::set_rgb_color(uint8_t r, uint8_t g, uint8_t b, effect effect, uint16_t duration, LightType lightType) {
+ResponseType Yeelight::set_rgb_color(const uint8_t r, const uint8_t g, const uint8_t b, const effect effect,
+                                     const uint16_t duration, const LightType lightType) {
     if (duration < 30) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (!supported_methods.set_rgb && !supported_methods.bg_set_rgb) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
     if (lightType == AUTO) {
         if (supported_methods.set_rgb && supported_methods.bg_set_rgb) {
-            ResponseType response = set_rgb_command(r, g, b, effect, duration);
-            if (response != ResponseType::SUCCESS) {
+            const ResponseType response = set_rgb_command(r, g, b, effect, duration);
+            if (response != SUCCESS) {
                 return response;
             }
             return bg_set_rgb_command(r, g, b, effect, duration);
-        } else if (supported_methods.set_rgb) {
-            return set_rgb_command(r, g, b, effect, duration);
-        } else {
-            return bg_set_rgb_command(r, g, b, effect, duration);
         }
-    } else if (lightType == MAIN_LIGHT) {
-        return set_rgb_command(r, g, b, effect, duration);
-    } else if (lightType == BACKGROUND_LIGHT) {
+        if (supported_methods.set_rgb) {
+            return set_rgb_command(r, g, b, effect, duration);
+        }
         return bg_set_rgb_command(r, g, b, effect, duration);
-    } else if (lightType == BOTH) {
-        ResponseType response = set_rgb_command(r, g, b, effect, duration);
-        if (response != ResponseType::SUCCESS) {
+    }
+    if (lightType == MAIN_LIGHT) {
+        return set_rgb_command(r, g, b, effect, duration);
+    }
+    if (lightType == BACKGROUND_LIGHT) {
+        return bg_set_rgb_command(r, g, b, effect, duration);
+    }
+    if (lightType == BOTH) {
+        const ResponseType response = set_rgb_command(r, g, b, effect, duration);
+        if (response != SUCCESS) {
             return response;
         }
         return bg_set_rgb_command(r, g, b, effect, duration);
     }
-    return ResponseType::ERROR;
+    return ERROR;
 }
 
-ResponseType Yeelight::set_rgb_color(uint8_t r, uint8_t g, uint8_t b, uint8_t bright, LightType lightType) {
+ResponseType Yeelight::set_rgb_color(const uint8_t r, const uint8_t g, const uint8_t b, const uint8_t bright,
+                                     const LightType lightType) {
     if (bright < 1 || bright > 100) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (!supported_methods.set_scene && !supported_methods.bg_set_scene) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
     if (lightType == AUTO) {
         if (supported_methods.set_scene && supported_methods.bg_set_scene) {
-            ResponseType response = set_scene_rgb_command(r, g, b, bright);
-            if (response != ResponseType::SUCCESS) {
+            const ResponseType response = set_scene_rgb_command(r, g, b, bright);
+            if (response != SUCCESS) {
                 return response;
             }
             return bg_set_scene_rgb_command(r, g, b, bright);
-        } else if (supported_methods.set_scene) {
-            return set_scene_rgb_command(r, g, b, bright);
-        } else {
-            return bg_set_scene_rgb_command(r, g, b, bright);
         }
-    } else if (lightType == MAIN_LIGHT) {
-        return set_scene_rgb_command(r, g, b, bright);
-    } else if (lightType == BACKGROUND_LIGHT) {
+        if (supported_methods.set_scene) {
+            return set_scene_rgb_command(r, g, b, bright);
+        }
         return bg_set_scene_rgb_command(r, g, b, bright);
-    } else if (lightType == BOTH) {
-        ResponseType response = set_scene_rgb_command(r, g, b, bright);
-        if (response != ResponseType::SUCCESS) {
+    }
+    if (lightType == MAIN_LIGHT) {
+        return set_scene_rgb_command(r, g, b, bright);
+    }
+    if (lightType == BACKGROUND_LIGHT) {
+        return bg_set_scene_rgb_command(r, g, b, bright);
+    }
+    if (lightType == BOTH) {
+        const ResponseType response = set_scene_rgb_command(r, g, b, bright);
+        if (response != SUCCESS) {
             return response;
         }
         return bg_set_scene_rgb_command(r, g, b, bright);
     }
-    return ResponseType::ERROR;
+    return ERROR;
 }
 
-ResponseType Yeelight::set_brightness(uint8_t bright, LightType lightType) {
+ResponseType Yeelight::set_brightness(const uint8_t bright, const LightType lightType) {
     return set_brightness(bright, EFFECT_SMOOTH, lightType);
 }
 
-ResponseType Yeelight::set_brightness(uint8_t bright, effect effect, LightType lightType) {
+ResponseType Yeelight::set_brightness(const uint8_t bright, const effect effect, const LightType lightType) {
     return set_brightness(bright, effect, 500, lightType);
 }
 
-ResponseType Yeelight::set_brightness(uint8_t bright, effect effect, uint16_t duration, LightType lightType) {
+ResponseType Yeelight::set_brightness(const uint8_t bright, const effect effect, const uint16_t duration,
+                                      const LightType lightType) {
     if (bright < 1 || bright > 100) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (duration < 30) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (!supported_methods.set_bright && !supported_methods.bg_set_bright) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
     if (lightType == AUTO) {
         if (supported_methods.set_bright && supported_methods.bg_set_bright) {
-            ResponseType response = set_bright_command(bright, effect, duration);
-            if (response != ResponseType::SUCCESS) {
+            const ResponseType response = set_bright_command(bright, effect, duration);
+            if (response != SUCCESS) {
                 return response;
             }
             return bg_set_bright_command(bright, effect, duration);
-        } else if (supported_methods.set_bright) {
-            return set_bright_command(bright, effect, duration);
-        } else {
-            return bg_set_bright_command(bright, effect, duration);
         }
-    } else if (lightType == MAIN_LIGHT) {
-        return set_bright_command(bright, effect, duration);
-    } else if (lightType == BACKGROUND_LIGHT) {
+        if (supported_methods.set_bright) {
+            return set_bright_command(bright, effect, duration);
+        }
         return bg_set_bright_command(bright, effect, duration);
-    } else if (lightType == BOTH) {
-        ResponseType response = set_bright_command(bright, effect, duration);
-        if (response != ResponseType::SUCCESS) {
+    }
+    if (lightType == MAIN_LIGHT) {
+        return set_bright_command(bright, effect, duration);
+    }
+    if (lightType == BACKGROUND_LIGHT) {
+        return bg_set_bright_command(bright, effect, duration);
+    }
+    if (lightType == BOTH) {
+        const ResponseType response = set_bright_command(bright, effect, duration);
+        if (response != SUCCESS) {
             return response;
         }
         return bg_set_bright_command(bright, effect, duration);
     }
-    return ResponseType::ERROR;
+    return ERROR;
 }
 
-ResponseType Yeelight::set_hsv_color(uint16_t hue, uint8_t sat, LightType lightType) {
+ResponseType Yeelight::set_hsv_color(const uint16_t hue, const uint8_t sat, const LightType lightType) {
     return set_hsv_color(hue, sat, EFFECT_SMOOTH, 500, lightType);
 }
 
-ResponseType Yeelight::set_hsv_color(uint16_t hue, uint8_t sat, effect effect, LightType lightType) {
+ResponseType Yeelight::set_hsv_color(const uint16_t hue, const uint8_t sat, const effect effect,
+                                     const LightType lightType) {
     return set_hsv_color(hue, sat, effect, 500, lightType);
 }
 
-ResponseType Yeelight::set_hsv_color(uint16_t hue, uint8_t sat, effect effect, uint16_t duration, LightType lightType) {
+ResponseType Yeelight::set_hsv_color(const uint16_t hue, const uint8_t sat, const effect effect,
+                                     const uint16_t duration, const LightType lightType) {
     if (hue > 359) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (sat > 100) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (duration < 30) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (!supported_methods.set_hsv && !supported_methods.bg_set_hsv) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
     if (lightType == AUTO) {
         if (supported_methods.set_hsv && supported_methods.bg_set_hsv) {
-            ResponseType response = set_hsv_command(hue, sat, effect, duration);
-            if (response != ResponseType::SUCCESS) {
+            const ResponseType response = set_hsv_command(hue, sat, effect, duration);
+            if (response != SUCCESS) {
                 return response;
             }
             return bg_set_hsv_command(hue, sat, effect, duration);
-        } else if (supported_methods.set_hsv) {
+        }
+        if (supported_methods.set_hsv) {
             return set_hsv_command(hue, sat, effect, duration);
-        } else {
-            return bg_set_hsv_command(hue, sat, effect, duration);
         }
-    } else if (lightType == MAIN_LIGHT) {
+        return bg_set_hsv_command(hue, sat, effect, duration);
+    }
+    if (lightType == MAIN_LIGHT) {
         return set_hsv_command(hue, sat, effect, duration);
-    } else if (lightType == BACKGROUND_LIGHT) {
+    }
+    if (lightType == BACKGROUND_LIGHT) {
         return bg_set_hsv_command(hue, sat, effect, duration);
-    } else if (lightType == BOTH) {
-        ResponseType response = set_hsv_command(hue, sat, effect, duration);
-        if (response != ResponseType::SUCCESS) {
+    }
+    if (lightType == BOTH) {
+        const ResponseType response = set_hsv_command(hue, sat, effect, duration);
+        if (response != SUCCESS) {
             return response;
         }
         return bg_set_hsv_command(hue, sat, effect, duration);
     }
-    return ResponseType::ERROR;
+    return ERROR;
 }
 
-ResponseType Yeelight::set_hsv_color(uint16_t hue, uint8_t sat, uint8_t bright, LightType lightType) {
+ResponseType Yeelight::set_hsv_color(const uint16_t hue, const uint8_t sat, const uint8_t bright,
+                                     const LightType lightType) {
     if (bright < 1 || bright > 100) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (hue > 359) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (sat > 100) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (!supported_methods.set_scene && !supported_methods.bg_set_scene) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
     if (lightType == AUTO) {
         if (supported_methods.set_scene && supported_methods.bg_set_scene) {
-            ResponseType response = set_scene_hsv_command((uint8_t) hue, sat, bright);
-            if (response != ResponseType::SUCCESS) {
+            const ResponseType response = set_scene_hsv_command(static_cast<uint8_t>(hue), sat, bright);
+            if (response != SUCCESS) {
                 return response;
             }
-            return bg_set_scene_hsv_command((uint8_t) hue, sat, bright);
-        } else if (supported_methods.set_scene) {
-            return set_scene_hsv_command((uint8_t) hue, sat, bright);
-        } else {
-            return bg_set_scene_hsv_command((uint8_t) hue, sat, bright);
+            return bg_set_scene_hsv_command(static_cast<uint8_t>(hue), sat, bright);
         }
-    } else if (lightType == MAIN_LIGHT) {
-        return set_scene_hsv_command((uint8_t) hue, sat, bright);
-    } else if (lightType == BACKGROUND_LIGHT) {
-        return bg_set_scene_hsv_command((uint8_t) hue, sat, bright);
-    } else if (lightType == BOTH) {
-        ResponseType response = set_scene_hsv_command((uint8_t) hue, sat, bright);
-        if (response != ResponseType::SUCCESS) {
+        if (supported_methods.set_scene) {
+            return set_scene_hsv_command(static_cast<uint8_t>(hue), sat, bright);
+        }
+        return bg_set_scene_hsv_command(static_cast<uint8_t>(hue), sat, bright);
+    }
+    if (lightType == MAIN_LIGHT) {
+        return set_scene_hsv_command(static_cast<uint8_t>(hue), sat, bright);
+    }
+    if (lightType == BACKGROUND_LIGHT) {
+        return bg_set_scene_hsv_command(static_cast<uint8_t>(hue), sat, bright);
+    }
+    if (lightType == BOTH) {
+        const ResponseType response = set_scene_hsv_command(static_cast<uint8_t>(hue), sat, bright);
+        if (response != SUCCESS) {
             return response;
         }
-        return bg_set_scene_hsv_command((uint8_t) hue, sat, bright);
+        return bg_set_scene_hsv_command(static_cast<uint8_t>(hue), sat, bright);
     }
-    return ResponseType::ERROR;
+    return ERROR;
 }
 
-ResponseType Yeelight::set_scene_rgb(uint8_t r, uint8_t g, uint8_t b, uint8_t bright, LightType lightType) {
+ResponseType Yeelight::set_scene_rgb(const uint8_t r, const uint8_t g, const uint8_t b, const uint8_t bright,
+                                     const LightType lightType) {
     if (bright < 1 || bright > 100) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (!supported_methods.set_scene && !supported_methods.bg_set_scene) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
     if (lightType == AUTO) {
         if (supported_methods.set_scene && supported_methods.bg_set_scene) {
-            ResponseType response = set_scene_rgb_command(r, g, b, bright);
-            if (response != ResponseType::SUCCESS) {
+            const ResponseType response = set_scene_rgb_command(r, g, b, bright);
+            if (response != SUCCESS) {
                 return response;
             }
             return bg_set_scene_rgb_command(r, g, b, bright);
-        } else if (supported_methods.set_scene) {
+        }
+        if (supported_methods.set_scene) {
             return set_scene_rgb_command(r, g, b, bright);
-        } else {
-            return bg_set_scene_rgb_command(r, g, b, bright);
         }
-    } else if (lightType == MAIN_LIGHT) {
-        return set_scene_rgb_command(r, g, b, bright);
-    } else if (lightType == BACKGROUND_LIGHT) {
         return bg_set_scene_rgb_command(r, g, b, bright);
-    } else if (lightType == BOTH) {
-        ResponseType response = set_scene_rgb_command(r, g, b, bright);
-        if (response != ResponseType::SUCCESS) {
+    }
+    if (lightType == MAIN_LIGHT) {
+        return set_scene_rgb_command(r, g, b, bright);
+    }
+    if (lightType == BACKGROUND_LIGHT) {
+        return bg_set_scene_rgb_command(r, g, b, bright);
+    }
+    if (lightType == BOTH) {
+        const ResponseType response = set_scene_rgb_command(r, g, b, bright);
+        if (response != SUCCESS) {
             return response;
         }
         return bg_set_scene_rgb_command(r, g, b, bright);
     }
-    return ResponseType::ERROR;
+    return ERROR;
 }
 
-ResponseType Yeelight::set_scene_hsv(uint16_t hue, uint8_t sat, uint8_t bright, LightType lightType) {
+ResponseType Yeelight::set_scene_hsv(const uint16_t hue, const uint8_t sat, const uint8_t bright,
+                                     const LightType lightType) {
     if (bright < 1 || bright > 100) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (hue > 359) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (sat > 100) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (!supported_methods.set_scene && !supported_methods.bg_set_scene) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
     if (lightType == AUTO) {
         if (supported_methods.set_scene && supported_methods.bg_set_scene) {
-            ResponseType response = set_scene_hsv_command((uint8_t) hue, sat, bright);
-            if (response != ResponseType::SUCCESS) {
+            const ResponseType response = set_scene_hsv_command(static_cast<uint8_t>(hue), sat, bright);
+            if (response != SUCCESS) {
                 return response;
             }
-            return bg_set_scene_hsv_command((uint8_t) hue, sat, bright);
-        } else if (supported_methods.set_scene) {
-            return set_scene_hsv_command((uint8_t) hue, sat, bright);
-        } else {
-            return bg_set_scene_hsv_command((uint8_t) hue, sat, bright);
+            return bg_set_scene_hsv_command(static_cast<uint8_t>(hue), sat, bright);
         }
-    } else if (lightType == MAIN_LIGHT) {
-        return set_scene_hsv_command((uint8_t) hue, sat, bright);
-    } else if (lightType == BACKGROUND_LIGHT) {
-        return bg_set_scene_hsv_command((uint8_t) hue, sat, bright);
-    } else if (lightType == BOTH) {
-        ResponseType response = set_scene_hsv_command((uint8_t) hue, sat, bright);
-        if (response != ResponseType::SUCCESS) {
+        if (supported_methods.set_scene) {
+            return set_scene_hsv_command(static_cast<uint8_t>(hue), sat, bright);
+        }
+        return bg_set_scene_hsv_command(static_cast<uint8_t>(hue), sat, bright);
+    }
+    if (lightType == MAIN_LIGHT) {
+        return set_scene_hsv_command(static_cast<uint8_t>(hue), sat, bright);
+    }
+    if (lightType == BACKGROUND_LIGHT) {
+        return bg_set_scene_hsv_command(static_cast<uint8_t>(hue), sat, bright);
+    }
+    if (lightType == BOTH) {
+        const ResponseType response = set_scene_hsv_command(static_cast<uint8_t>(hue), sat, bright);
+        if (response != SUCCESS) {
             return response;
         }
-        return bg_set_scene_hsv_command((uint8_t) hue, sat, bright);
+        return bg_set_scene_hsv_command(static_cast<uint8_t>(hue), sat, bright);
     }
-    return ResponseType::ERROR;
+    return ERROR;
 }
 
-ResponseType Yeelight::set_scene_color_temperature(uint16_t ct, uint8_t bright, LightType lightType) {
+ResponseType Yeelight::set_scene_color_temperature(const uint16_t ct, const uint8_t bright, const LightType lightType) {
     if (bright < 1 || bright > 100) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (ct < 1700 || ct > 6500) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (!supported_methods.set_scene && !supported_methods.bg_set_scene) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
     if (lightType == AUTO) {
         if (supported_methods.set_scene && supported_methods.bg_set_scene) {
-            ResponseType response = set_scene_ct_command(ct, bright);
-            if (response != ResponseType::SUCCESS) {
+            const ResponseType response = set_scene_ct_command(ct, bright);
+            if (response != SUCCESS) {
                 return response;
             }
             return bg_set_scene_ct_command(ct, bright);
-        } else if (supported_methods.set_scene) {
+        }
+        if (supported_methods.set_scene) {
             return set_scene_ct_command(ct, bright);
-        } else {
-            return bg_set_scene_ct_command(ct, bright);
         }
-    } else if (lightType == MAIN_LIGHT) {
-        return set_scene_ct_command(ct, bright);
-    } else if (lightType == BACKGROUND_LIGHT) {
         return bg_set_scene_ct_command(ct, bright);
-    } else if (lightType == BOTH) {
-        ResponseType response = set_scene_ct_command(ct, bright);
-        if (response != ResponseType::SUCCESS) {
+    }
+    if (lightType == MAIN_LIGHT) {
+        return set_scene_ct_command(ct, bright);
+    }
+    if (lightType == BACKGROUND_LIGHT) {
+        return bg_set_scene_ct_command(ct, bright);
+    }
+    if (lightType == BOTH) {
+        const ResponseType response = set_scene_ct_command(ct, bright);
+        if (response != SUCCESS) {
             return response;
         }
         return bg_set_scene_ct_command(ct, bright);
     }
-    return ResponseType::ERROR;
+    return ERROR;
 }
 
-ResponseType Yeelight::set_scene_auto_delay_off(uint8_t brightness, uint32_t duration, LightType lightType) {
+ResponseType Yeelight::set_scene_auto_delay_off(const uint8_t brightness, const uint32_t duration,
+                                                const LightType lightType) {
     if (brightness < 1 || brightness > 100) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (!supported_methods.set_scene && !supported_methods.bg_set_scene) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
     if (lightType == AUTO) {
         if (supported_methods.set_scene && supported_methods.bg_set_scene) {
-            ResponseType response = set_scene_auto_delay_off_command(brightness, duration);
-            if (response != ResponseType::SUCCESS) {
+            const ResponseType response = set_scene_auto_delay_off_command(brightness, duration);
+            if (response != SUCCESS) {
                 return response;
             }
             return bg_set_scene_auto_delay_off_command(brightness, duration);
-        } else if (supported_methods.set_scene) {
-            return set_scene_auto_delay_off_command(brightness, duration);
-        } else {
-            return bg_set_scene_auto_delay_off_command(brightness, duration);
         }
-    } else if (lightType == MAIN_LIGHT) {
-        return set_scene_auto_delay_off_command(brightness, duration);
-    } else if (lightType == BACKGROUND_LIGHT) {
+        if (supported_methods.set_scene) {
+            return set_scene_auto_delay_off_command(brightness, duration);
+        }
         return bg_set_scene_auto_delay_off_command(brightness, duration);
-    } else if (lightType == BOTH) {
-        ResponseType response = set_scene_auto_delay_off_command(brightness, duration);
-        if (response != ResponseType::SUCCESS) {
+    }
+    if (lightType == MAIN_LIGHT) {
+        return set_scene_auto_delay_off_command(brightness, duration);
+    }
+    if (lightType == BACKGROUND_LIGHT) {
+        return bg_set_scene_auto_delay_off_command(brightness, duration);
+    }
+    if (lightType == BOTH) {
+        const ResponseType response = set_scene_auto_delay_off_command(brightness, duration);
+        if (response != SUCCESS) {
             return response;
         }
         return bg_set_scene_auto_delay_off_command(brightness, duration);
     }
-    return ResponseType::ERROR;
+    return ERROR;
 }
 
-ResponseType Yeelight::set_turn_off_delay(uint32_t duration) {
+ResponseType Yeelight::set_turn_off_delay(const uint32_t duration) {
     if (!supported_methods.cron_add) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
     return cron_add_command(duration);
 }
 
 ResponseType Yeelight::remove_turn_off_delay() {
     if (!supported_methods.cron_del) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
     return cron_del_command();
 }
 
-ResponseType Yeelight::set_default_state(LightType lightType) {
+ResponseType Yeelight::set_default_state(const LightType lightType) {
     if (!supported_methods.set_default && !supported_methods.bg_set_default) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
     if (lightType == AUTO) {
         if (supported_methods.set_default && supported_methods.bg_set_default) {
-            ResponseType response = set_default();
-            if (response != ResponseType::SUCCESS) {
+            const ResponseType response = set_default();
+            if (response != SUCCESS) {
                 return response;
             }
             return bg_set_default();
-        } else if (supported_methods.set_default) {
-            return set_default();
-        } else {
-            return bg_set_default();
         }
-    } else if (lightType == MAIN_LIGHT) {
-        return set_default();
-    } else if (lightType == BACKGROUND_LIGHT) {
+        if (supported_methods.set_default) {
+            return set_default();
+        }
         return bg_set_default();
-    } else if (lightType == BOTH) {
-        ResponseType response = set_default();
-        if (response != ResponseType::SUCCESS) {
+    }
+    if (lightType == MAIN_LIGHT) {
+        return set_default();
+    }
+    if (lightType == BACKGROUND_LIGHT) {
+        return bg_set_default();
+    }
+    if (lightType == BOTH) {
+        const ResponseType response = set_default();
+        if (response != SUCCESS) {
             return response;
         }
         return bg_set_default();
     }
-    return ResponseType::ERROR;
+    return ERROR;
 }
 
 ResponseType Yeelight::set_device_name(const char *name) {
     if (!supported_methods.set_name) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
     return set_name_command(name);
 }
@@ -1499,127 +1565,137 @@ ResponseType Yeelight::set_device_name(const std::string &name) {
     return set_device_name(name.c_str());
 }
 
-ResponseType Yeelight::adjust_brightness(int8_t percentage, LightType lightType) {
+ResponseType Yeelight::adjust_brightness(const int8_t percentage, const LightType lightType) {
     return adjust_brightness(percentage, 500, lightType);
 }
 
-ResponseType Yeelight::adjust_brightness(int8_t percentage, uint16_t duration, LightType lightType) {
+ResponseType Yeelight::adjust_brightness(const int8_t percentage, const uint16_t duration, const LightType lightType) {
     if (percentage < -100 || percentage > 100) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (duration < 30) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (!supported_methods.set_adjust && !supported_methods.bg_set_adjust) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
     if (lightType == AUTO) {
         if (supported_methods.adjust_bright && supported_methods.bg_adjust_bright) {
-            ResponseType response = adjust_bright_command(percentage, duration);
-            if (response != ResponseType::SUCCESS) {
+            const ResponseType response = adjust_bright_command(percentage, duration);
+            if (response != SUCCESS) {
                 return response;
             }
             return bg_adjust_bright_command(percentage, duration);
-        } else if (supported_methods.adjust_bright) {
-            return adjust_bright_command(percentage, duration);
-        } else {
-            return bg_adjust_bright_command(percentage, duration);
         }
-    } else if (lightType == MAIN_LIGHT) {
-        return adjust_bright_command(percentage, duration);
-    } else if (lightType == BACKGROUND_LIGHT) {
+        if (supported_methods.adjust_bright) {
+            return adjust_bright_command(percentage, duration);
+        }
         return bg_adjust_bright_command(percentage, duration);
-    } else if (lightType == BOTH) {
-        ResponseType response = adjust_bright_command(percentage, duration);
-        if (response != ResponseType::SUCCESS) {
+    }
+    if (lightType == MAIN_LIGHT) {
+        return adjust_bright_command(percentage, duration);
+    }
+    if (lightType == BACKGROUND_LIGHT) {
+        return bg_adjust_bright_command(percentage, duration);
+    }
+    if (lightType == BOTH) {
+        const ResponseType response = adjust_bright_command(percentage, duration);
+        if (response != SUCCESS) {
             return response;
         }
         return bg_adjust_bright_command(percentage, duration);
     }
-    return ResponseType::ERROR;
+    return ERROR;
 }
 
-ResponseType Yeelight::adjust_color_temp(int8_t percentage, LightType lightType) {
+ResponseType Yeelight::adjust_color_temp(const int8_t percentage, const LightType lightType) {
     return adjust_color_temp(percentage, 500, lightType);
 }
 
-ResponseType Yeelight::adjust_color_temp(int8_t percentage, uint16_t duration, LightType lightType) {
+ResponseType Yeelight::adjust_color_temp(const int8_t percentage, const uint16_t duration, const LightType lightType) {
     if (percentage < -100 || percentage > 100) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (duration < 30) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (!supported_methods.adjust_ct && !supported_methods.bg_adjust_ct) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
     if (lightType == AUTO) {
         if (supported_methods.adjust_ct && supported_methods.bg_adjust_ct) {
-            ResponseType response = adjust_ct_command(percentage, duration);
-            if (response != ResponseType::SUCCESS) {
+            const ResponseType response = adjust_ct_command(percentage, duration);
+            if (response != SUCCESS) {
                 return response;
             }
             return bg_adjust_ct_command(percentage, duration);
-        } else if (supported_methods.adjust_ct) {
-            return adjust_ct_command(percentage, duration);
-        } else {
-            return bg_adjust_ct_command(percentage, duration);
         }
-    } else if (lightType == MAIN_LIGHT) {
-        return adjust_ct_command(percentage, duration);
-    } else if (lightType == BACKGROUND_LIGHT) {
+        if (supported_methods.adjust_ct) {
+            return adjust_ct_command(percentage, duration);
+        }
         return bg_adjust_ct_command(percentage, duration);
-    } else if (lightType == BOTH) {
-        ResponseType response = adjust_ct_command(percentage, duration);
-        if (response != ResponseType::SUCCESS) {
+    }
+    if (lightType == MAIN_LIGHT) {
+        return adjust_ct_command(percentage, duration);
+    }
+    if (lightType == BACKGROUND_LIGHT) {
+        return bg_adjust_ct_command(percentage, duration);
+    }
+    if (lightType == BOTH) {
+        const ResponseType response = adjust_ct_command(percentage, duration);
+        if (response != SUCCESS) {
             return response;
         }
         return bg_adjust_ct_command(percentage, duration);
     }
-    return ResponseType::ERROR;
+    return ERROR;
 }
 
-ResponseType Yeelight::adjust_color(int8_t percentage, LightType lightType) {
+ResponseType Yeelight::adjust_color(const int8_t percentage, const LightType lightType) {
     return adjust_color(percentage, 500, lightType);
 }
 
-ResponseType Yeelight::adjust_color(int8_t percentage, uint16_t duration, LightType lightType) {
+ResponseType Yeelight::adjust_color(const int8_t percentage, const uint16_t duration, const LightType lightType) {
     if (percentage < -100 || percentage > 100) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (duration < 30) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (!supported_methods.adjust_color && !supported_methods.bg_adjust_color) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
     if (lightType == AUTO) {
         if (supported_methods.adjust_color && supported_methods.bg_adjust_color) {
-            ResponseType response = adjust_color_command(percentage, duration);
-            if (response != ResponseType::SUCCESS) {
+            const ResponseType response = adjust_color_command(percentage, duration);
+            if (response != SUCCESS) {
                 return response;
             }
             return bg_adjust_color_command(percentage, duration);
-        } else if (supported_methods.adjust_color) {
-            return adjust_color_command(percentage, duration);
-        } else {
-            return bg_adjust_color_command(percentage, duration);
         }
-    } else if (lightType == MAIN_LIGHT) {
-        return adjust_color_command(percentage, duration);
-    } else if (lightType == BACKGROUND_LIGHT) {
+        if (supported_methods.adjust_color) {
+            return adjust_color_command(percentage, duration);
+        }
         return bg_adjust_color_command(percentage, duration);
-    } else if (lightType == BOTH) {
-        ResponseType response = adjust_color_command(percentage, duration);
-        if (response != ResponseType::SUCCESS) {
+    }
+    if (lightType == MAIN_LIGHT) {
+        return adjust_color_command(percentage, duration);
+    }
+    if (lightType == BACKGROUND_LIGHT) {
+        return bg_adjust_color_command(percentage, duration);
+    }
+    if (lightType == BOTH) {
+        const ResponseType response = adjust_color_command(percentage, duration);
+        if (response != SUCCESS) {
             return response;
         }
         return bg_adjust_color_command(percentage, duration);
     }
-    return ResponseType::ERROR;
+    return ERROR;
 }
 
-ResponseType Yeelight::bg_start_cf_command(uint8_t count, flow_action action, uint8_t size, flow_expression *flow) {
+ResponseType Yeelight::bg_start_cf_command(const uint8_t count, const flow_action action, const uint8_t size,
+                                           const flow_expression *flow) {
     cJSON *params = cJSON_CreateArray();
     cJSON_AddItemToArray(params, cJSON_CreateNumber(count));
     cJSON_AddItemToArray(params, cJSON_CreateNumber(action));
@@ -1636,55 +1712,56 @@ ResponseType Yeelight::bg_start_cf_command(uint8_t count, flow_action action, ui
 ResponseType Yeelight::bg_stop_cf_command() {
     cJSON *params = cJSON_CreateArray();
     if (params == nullptr) {
-        return ResponseType::ERROR;
+        return ERROR;
     }
     return send_command("bg_stop_cf", params);
 }
 
-ResponseType Yeelight::set_scene_flow(Flow flow, LightType lightType) {
+ResponseType Yeelight::set_scene_flow(Flow flow, const LightType lightType) {
     if (!supported_methods.set_scene && !supported_methods.bg_set_scene) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
     if (flow.get_size() == 0) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (flow.get_count() < 0) {
-        return ResponseType::INVALID_PARAMS;
+        return INVALID_PARAMS;
     }
     if (lightType == AUTO) {
         if (supported_methods.set_scene && supported_methods.bg_set_scene) {
-            ResponseType response = set_scene_cf_command(flow.get_count(), flow.getAction(), flow.get_size(),
-                                                         flow.get_flow().data());
-            if (response != ResponseType::SUCCESS) {
+            const ResponseType response = set_scene_cf_command(flow.get_count(), flow.getAction(), flow.get_size(),
+                                                               flow.get_flow().data());
+            if (response != SUCCESS) {
                 return response;
             }
             return bg_set_scene_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
-        } else if (supported_methods.set_scene) {
-            return set_scene_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
-        } else {
-            return bg_set_scene_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
         }
-    } else if (lightType == MAIN_LIGHT) {
-        return set_scene_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
-    } else if (lightType == BACKGROUND_LIGHT) {
+        if (supported_methods.set_scene) {
+            return set_scene_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
+        }
         return bg_set_scene_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
-    } else if (lightType == BOTH) {
-        ResponseType response = set_scene_cf_command(flow.get_count(), flow.getAction(), flow.get_size(),
-                                                     flow.get_flow().data());
-        if (response != ResponseType::SUCCESS) {
+    }
+    if (lightType == MAIN_LIGHT) {
+        return set_scene_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
+    }
+    if (lightType == BACKGROUND_LIGHT) {
+        return bg_set_scene_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
+    }
+    if (lightType == BOTH) {
+        const ResponseType response = set_scene_cf_command(flow.get_count(), flow.getAction(), flow.get_size(),
+                                                           flow.get_flow().data());
+        if (response != SUCCESS) {
             return response;
         }
         return bg_set_scene_cf_command(flow.get_count(), flow.getAction(), flow.get_size(), flow.get_flow().data());
     }
-    return ResponseType::ERROR;
+    return ERROR;
 }
 
 ResponseType Yeelight::refreshProperties() {
     if (!supported_methods.get_prop) {
-        return ResponseType::METHOD_NOT_SUPPORTED;
+        return METHOD_NOT_SUPPORTED;
     }
-    char params[] =
-            R"("power","bright","ct","rgb","hue","sat","color_mode","flowing","delayoff","music_on","name","bg_power","bg_flowing","bg_ct","bg_lmode","bg_bright","bg_rgb","bg_hue","bg_sat","nl_br","active_mode")";
     uint8_t current_retries = 0;
     while (!client.connected() && current_retries < max_retry) {
         connect();
@@ -1692,113 +1769,176 @@ ResponseType Yeelight::refreshProperties() {
         delay(250);
     }
     if (!client.connected()) {
-        return ResponseType::CONNECTION_LOST;
+        return CONNECTION_LOST;
     }
-
-    char command[512];
-    snprintf(command, sizeof(command), "{\"id\":1,\"method\":\"get_prop\",\"params\":[%s]}\r\n", params);
+    cJSON *root = cJSON_CreateObject();
+    if (!root) {
+        return ERROR;
+    }
+    cJSON_AddNumberToObject(root, "id", 1);
+    cJSON_AddStringToObject(root, "method", "get_prop");
+    cJSON *params = cJSON_CreateArray();
+    if (!params) {
+        cJSON_Delete(root);
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateString("power"));
+    cJSON_AddItemToArray(params, cJSON_CreateString("bright"));
+    cJSON_AddItemToArray(params, cJSON_CreateString("ct"));
+    cJSON_AddItemToArray(params, cJSON_CreateString("rgb"));
+    cJSON_AddItemToArray(params, cJSON_CreateString("hue"));
+    cJSON_AddItemToArray(params, cJSON_CreateString("sat"));
+    cJSON_AddItemToArray(params, cJSON_CreateString("color_mode"));
+    cJSON_AddItemToArray(params, cJSON_CreateString("flowing"));
+    cJSON_AddItemToArray(params, cJSON_CreateString("delayoff"));
+    cJSON_AddItemToArray(params, cJSON_CreateString("music_on"));
+    cJSON_AddItemToArray(params, cJSON_CreateString("name"));
+    cJSON_AddItemToArray(params, cJSON_CreateString("bg_power"));
+    cJSON_AddItemToArray(params, cJSON_CreateString("bg_flowing"));
+    cJSON_AddItemToArray(params, cJSON_CreateString("bg_ct"));
+    cJSON_AddItemToArray(params, cJSON_CreateString("bg_lmode"));
+    cJSON_AddItemToArray(params, cJSON_CreateString("bg_bright"));
+    cJSON_AddItemToArray(params, cJSON_CreateString("bg_rgb"));
+    cJSON_AddItemToArray(params, cJSON_CreateString("bg_hue"));
+    cJSON_AddItemToArray(params, cJSON_CreateString("bg_sat"));
+    cJSON_AddItemToArray(params, cJSON_CreateString("nl_br"));
+    cJSON_AddItemToArray(params, cJSON_CreateString("active_mode"));
+    cJSON_AddItemToObject(root, "params", params);
+    char *command = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!command) {
+        return ERROR;
+    }
     client.print(command);
-
-    unsigned long startTime = millis();
+    client.print("\r\n");
+    free(command);
+    const unsigned long startTime = millis();
     String response = "";
-
     while (millis() - startTime < timeout) {
         while (client.available()) {
-            String chunk = client.readString();
+            const String chunk = client.readString();
             response += chunk;
         }
-
-        // If we found "result" or "error" in response, probably complete
         if (response.indexOf("\"result\"") != -1 || response.indexOf("\"error\"") != -1) {
             break;
         }
-
         delay(10);
     }
-
     if (response.length() == 0) {
-        return ResponseType::TIMEOUT;
+        return TIMEOUT;
     }
-
-    cJSON *root = cJSON_Parse(response.c_str());
-    if (root == nullptr) {
-        cJSON_Delete(root);
-        return ResponseType::ERROR;
+    cJSON *response_root = cJSON_Parse(response.c_str());
+    if (!response_root) {
+        return ERROR;
     }
-
-    cJSON *result = cJSON_GetObjectItem(root, "result");
-    if (result == nullptr || !cJSON_IsArray(result)) {
-        cJSON_Delete(root);
-        return ResponseType::ERROR;
+    const cJSON *result_array = cJSON_GetObjectItem(response_root, "result");
+    if (!result_array || !cJSON_IsArray(result_array)) {
+        cJSON_Delete(response_root);
+        return ERROR;
     }
-
-    // Parse properties safely
-    auto getArrayString = [&](int idx) -> std::string {
-        cJSON *item = cJSON_GetArrayItem(result, idx);
-        if (item && cJSON_IsString(item)) {
-            return std::string(item->valuestring);
-        }
-        return "";
-    };
-
-    std::string power_str = getArrayString(0);
-    properties.power = (power_str == "on");
-
-    std::string bright_str = getArrayString(1);
-    properties.bright = bright_str.empty() ? 0 : (uint8_t) atoi(bright_str.c_str());
-
-    std::string ct_str = getArrayString(2);
-    properties.ct = ct_str.empty() ? 0 : (uint16_t) atoi(ct_str.c_str());
-
-    std::string rgb_str = getArrayString(3);
-    properties.rgb = rgb_str.empty() ? 0 : (uint32_t) atoi(rgb_str.c_str());
-
-    std::string hue_str = getArrayString(4);
-    properties.hue = hue_str.empty() ? 0 : (uint16_t) atoi(hue_str.c_str());
-
-    std::string sat_str = getArrayString(5);
-    properties.sat = sat_str.empty() ? 0 : (uint8_t) atoi(sat_str.c_str());
-
-    std::string color_mode_str = getArrayString(6);
-    if (!color_mode_str.empty()) {
-        uint8_t color_mode_int = (uint8_t) atoi(color_mode_str.c_str());
-        if (color_mode_int == 1) {
+    if (cJSON_GetArraySize(result_array) < 21) {
+        cJSON_Delete(response_root);
+        return ERROR;
+    }
+    const cJSON *item = cJSON_GetArrayItem(result_array, 0);
+    if (cJSON_IsString(item)) {
+        properties.power = strcmp(item->valuestring, "on") == 0;
+    }
+    item = cJSON_GetArrayItem(result_array, 1);
+    if (cJSON_IsNumber(item)) {
+        properties.bright = static_cast<uint8_t>(item->valuedouble);
+    } else if (cJSON_IsString(item)) {
+        properties.bright = static_cast<uint8_t>(atoi(item->valuestring));
+    }
+    item = cJSON_GetArrayItem(result_array, 2);
+    if (cJSON_IsNumber(item)) {
+        properties.ct = static_cast<uint16_t>(item->valuedouble);
+    } else if (cJSON_IsString(item)) {
+        properties.ct = static_cast<uint16_t>(atoi(item->valuestring));
+    }
+    item = cJSON_GetArrayItem(result_array, 3);
+    if (cJSON_IsNumber(item)) {
+        properties.rgb = static_cast<uint32_t>(item->valuedouble);
+    } else if (cJSON_IsString(item)) {
+        properties.rgb = static_cast<uint32_t>(atoi(item->valuestring));
+    }
+    item = cJSON_GetArrayItem(result_array, 4);
+    if (cJSON_IsNumber(item)) {
+        properties.hue = static_cast<uint16_t>(item->valuedouble);
+    } else if (cJSON_IsString(item)) {
+        properties.hue = static_cast<uint16_t>(atoi(item->valuestring));
+    }
+    item = cJSON_GetArrayItem(result_array, 5);
+    if (cJSON_IsNumber(item)) {
+        properties.sat = static_cast<uint8_t>(item->valuedouble);
+    } else if (cJSON_IsString(item)) {
+        properties.sat = static_cast<uint8_t>(atoi(item->valuestring));
+    }
+    item = cJSON_GetArrayItem(result_array, 6);
+    if (cJSON_IsNumber(item)) {
+        const auto cm = static_cast<uint8_t>(item->valuedouble);
+        if (cm == 1) {
             properties.color_mode = COLOR_MODE_RGB;
-        } else if (color_mode_int == 2) {
+        } else if (cm == 2) {
             properties.color_mode = COLOR_MODE_COLOR_TEMPERATURE;
-        } else if (color_mode_int == 3) {
+        } else if (cm == 3) {
             properties.color_mode = COLOR_MODE_HSV;
         } else {
             properties.color_mode = COLOR_MODE_UNKNOWN;
         }
-    } else {
-        properties.color_mode = COLOR_MODE_UNKNOWN;
+    } else if (cJSON_IsString(item)) {
+        const auto cm = static_cast<uint8_t>(atoi(item->valuestring));
+        if (cm == 1) {
+            properties.color_mode = COLOR_MODE_RGB;
+        } else if (cm == 2) {
+            properties.color_mode = COLOR_MODE_COLOR_TEMPERATURE;
+        } else if (cm == 3) {
+            properties.color_mode = COLOR_MODE_HSV;
+        } else {
+            properties.color_mode = COLOR_MODE_UNKNOWN;
+        }
     }
-
-    std::string flowing_str = getArrayString(7);
-    properties.flowing = (!flowing_str.empty() && flowing_str == "1");
-
-    std::string delayoff_str = getArrayString(8);
-    properties.delayoff = delayoff_str.empty() ? 0 : (uint8_t) atoi(delayoff_str.c_str());
-
-    std::string music_on_str = getArrayString(9);
-    properties.music_on = (!music_on_str.empty() && music_on_str == "1");
-
-    std::string name_str = getArrayString(10);
-    properties.name = name_str;
-
-    std::string bg_power_str = getArrayString(11);
-    properties.bg_power = (bg_power_str == "on");
-
-    std::string bg_flowing_str = getArrayString(12);
-    properties.bg_flowing = (!bg_flowing_str.empty() && bg_flowing_str == "1");
-
-    std::string bg_ct_str = getArrayString(13);
-    properties.bg_ct = bg_ct_str.empty() ? 0 : (uint16_t) atoi(bg_ct_str.c_str());
-
-    std::string bg_lmode_str = getArrayString(14);
-    if (!bg_lmode_str.empty()) {
-        uint8_t bg_lmode_int = (uint8_t) atoi(bg_lmode_str.c_str());
+    item = cJSON_GetArrayItem(result_array, 7);
+    if (cJSON_IsNumber(item)) {
+        properties.flowing = static_cast<int>(item->valuedouble) == 1;
+    } else if (cJSON_IsString(item)) {
+        properties.flowing = atoi(item->valuestring) == 1;
+    }
+    item = cJSON_GetArrayItem(result_array, 8);
+    if (cJSON_IsNumber(item)) {
+        properties.delayoff = static_cast<uint8_t>(item->valuedouble);
+    } else if (cJSON_IsString(item)) {
+        properties.delayoff = static_cast<uint8_t>(atoi(item->valuestring));
+    }
+    item = cJSON_GetArrayItem(result_array, 9);
+    if (cJSON_IsNumber(item)) {
+        properties.music_on = static_cast<int>(item->valuedouble) == 1;
+    } else if (cJSON_IsString(item)) {
+        properties.music_on = atoi(item->valuestring) == 1;
+    }
+    item = cJSON_GetArrayItem(result_array, 10);
+    if (cJSON_IsString(item)) {
+        properties.name = String(item->valuestring).c_str();
+    }
+    item = cJSON_GetArrayItem(result_array, 11);
+    if (cJSON_IsString(item)) {
+        properties.bg_power = strcmp(item->valuestring, "on") == 0;
+    }
+    item = cJSON_GetArrayItem(result_array, 12);
+    if (cJSON_IsNumber(item)) {
+        properties.bg_flowing = static_cast<int>(item->valuedouble) == 1;
+    } else if (cJSON_IsString(item)) {
+        properties.bg_flowing = atoi(item->valuestring) == 1;
+    }
+    item = cJSON_GetArrayItem(result_array, 13);
+    if (cJSON_IsNumber(item)) {
+        properties.bg_ct = static_cast<uint16_t>(item->valuedouble);
+    } else if (cJSON_IsString(item)) {
+        properties.bg_ct = static_cast<uint16_t>(atoi(item->valuestring));
+    }
+    item = cJSON_GetArrayItem(result_array, 14);
+    if (cJSON_IsNumber(item)) {
+        const auto bg_lmode_int = static_cast<uint8_t>(item->valuedouble);
         if (bg_lmode_int == 1) {
             properties.bg_color_mode = COLOR_MODE_RGB;
         } else if (bg_lmode_int == 2) {
@@ -1808,38 +1948,63 @@ ResponseType Yeelight::refreshProperties() {
         } else {
             properties.bg_color_mode = COLOR_MODE_UNKNOWN;
         }
-    } else {
-        properties.bg_color_mode = COLOR_MODE_UNKNOWN;
+    } else if (cJSON_IsString(item)) {
+        const auto bg_lmode_int = static_cast<uint8_t>(atoi(item->valuestring));
+        if (bg_lmode_int == 1) {
+            properties.bg_color_mode = COLOR_MODE_RGB;
+        } else if (bg_lmode_int == 2) {
+            properties.bg_color_mode = COLOR_MODE_COLOR_TEMPERATURE;
+        } else if (bg_lmode_int == 3) {
+            properties.bg_color_mode = COLOR_MODE_HSV;
+        } else {
+            properties.bg_color_mode = COLOR_MODE_UNKNOWN;
+        }
     }
-
-    std::string bg_bright_str = getArrayString(15);
-    properties.bg_bright = bg_bright_str.empty() ? 0 : (uint8_t) atoi(bg_bright_str.c_str());
-
-    std::string bg_rgb_str = getArrayString(16);
-    properties.bg_rgb = bg_rgb_str.empty() ? 0 : (uint32_t) atoi(bg_rgb_str.c_str());
-
-    std::string bg_hue_str = getArrayString(17);
-    properties.bg_hue = bg_hue_str.empty() ? 0 : (uint16_t) atoi(bg_hue_str.c_str());
-
-    std::string bg_sat_str = getArrayString(18);
-    properties.bg_sat = bg_sat_str.empty() ? 0 : (uint8_t) atoi(bg_sat_str.c_str());
-
-    std::string nl_br_str = getArrayString(19);
-    properties.nl_br = nl_br_str.empty() ? 0 : (uint8_t) atoi(nl_br_str.c_str());
-
-    std::string active_mode_str = getArrayString(20);
-    // active_mode is 0 or 1
-    properties.active_mode = (!active_mode_str.empty() && active_mode_str == "1");
-
-    cJSON_Delete(root);
-    return ResponseType::SUCCESS;
+    item = cJSON_GetArrayItem(result_array, 15);
+    if (cJSON_IsNumber(item)) {
+        properties.bg_bright = static_cast<uint8_t>(item->valuedouble);
+    } else if (cJSON_IsString(item)) {
+        properties.bg_bright = static_cast<uint8_t>(atoi(item->valuestring));
+    }
+    item = cJSON_GetArrayItem(result_array, 16);
+    if (cJSON_IsNumber(item)) {
+        properties.bg_rgb = static_cast<uint32_t>(item->valuedouble);
+    } else if (cJSON_IsString(item)) {
+        properties.bg_rgb = static_cast<uint32_t>(atoi(item->valuestring));
+    }
+    item = cJSON_GetArrayItem(result_array, 17);
+    if (cJSON_IsNumber(item)) {
+        properties.bg_hue = static_cast<uint16_t>(item->valuedouble);
+    } else if (cJSON_IsString(item)) {
+        properties.bg_hue = static_cast<uint16_t>(atoi(item->valuestring));
+    }
+    item = cJSON_GetArrayItem(result_array, 18);
+    if (cJSON_IsNumber(item)) {
+        properties.bg_sat = static_cast<uint8_t>(item->valuedouble);
+    } else if (cJSON_IsString(item)) {
+        properties.bg_sat = static_cast<uint8_t>(atoi(item->valuestring));
+    }
+    item = cJSON_GetArrayItem(result_array, 19);
+    if (cJSON_IsNumber(item)) {
+        properties.nl_br = static_cast<uint8_t>(item->valuedouble);
+    } else if (cJSON_IsString(item)) {
+        properties.nl_br = static_cast<uint8_t>(atoi(item->valuestring));
+    }
+    item = cJSON_GetArrayItem(result_array, 20);
+    if (cJSON_IsNumber(item)) {
+        properties.active_mode = static_cast<int>(item->valuedouble) == 1;
+    } else if (cJSON_IsString(item)) {
+        properties.active_mode = atoi(item->valuestring) == 1;
+    }
+    cJSON_Delete(response_root);
+    return SUCCESS;
 }
 
 YeelightProperties Yeelight::getProperties() {
     return properties;
 }
 
-ResponseType Yeelight::connect(const uint8_t *ip, uint16_t port) {
+ResponseType Yeelight::connect(const uint8_t *ip, const uint16_t port) {
     if (client.connected()) {
         client.stop();
     }
@@ -1875,7 +2040,7 @@ bool Yeelight::is_connected() {
     return client.connected();
 }
 
-void Yeelight::set_timeout(uint16_t timeout) {
+void Yeelight::set_timeout(const uint16_t timeout) {
     this->timeout = timeout;
 }
 

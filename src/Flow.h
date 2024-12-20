@@ -66,7 +66,7 @@ public:
      * 
      * @param expression The flow expression to be added.
      */
-    void add_expression(flow_expression expression);
+    void add_expression(const flow_expression &expression);
 
     /**
      * @brief Returns the vector of flow expressions representing the flow.
@@ -103,7 +103,7 @@ public:
      * @param index The index of the flow expression.
      * @return The flow expression at the specified index.
      */
-    flow_expression operator[](uint32_t index);
+    flow_expression operator[](uint32_t index) const;
 
     /**
      * @brief Concatenates two flows together.
@@ -111,7 +111,7 @@ public:
      * @param flow The flow to be concatenated.
      * @return The concatenated flow.
      */
-    Flow operator+(const Flow &flow);
+    Flow operator+(const Flow &flow) const;
 
     /**
      * @brief Concatenates a flow expression to the flow.
@@ -119,7 +119,7 @@ public:
      * @param expression The flow expression to be concatenated.
      * @return The concatenated flow.
      */
-    Flow operator+(const flow_expression &expression);
+    Flow operator+(const flow_expression &expression) const;
 
     /**
      * @brief Concatenates a vector of flow expressions to the flow.
@@ -127,7 +127,7 @@ public:
      * @param expressions The vector of flow expressions to be concatenated.
      * @return The concatenated flow.
      */
-    Flow operator+(const std::vector<flow_expression> &expressions);
+    Flow operator+(const std::vector<flow_expression> &expressions) const;
 
     /**
      * @brief Sets the number of times the flow should be repeated.
@@ -141,14 +141,14 @@ public:
      * 
      * @return The number of times to repeat the flow.
      */
-    uint8_t get_count();
+    uint8_t get_count() const;
 
     /**
      * @brief Returns the size of the object.
      *
      * @return The size of the object.
      */
-    uint8_t get_size();
+    uint8_t get_size() const;
 
     flow_action getAction() const;
 

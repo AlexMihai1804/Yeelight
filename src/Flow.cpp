@@ -4,27 +4,27 @@ Flow::Flow() {
     flow = std::vector<flow_expression>();
 }
 
-void Flow::add_rgb(uint32_t duration, uint32_t value, int8_t brightness) {
-    flow_expression expression = {duration, FLOW_COLOR, value, brightness};
+void Flow::add_rgb(const uint32_t duration, const uint32_t value, const int8_t brightness) {
+    const flow_expression expression = {duration, FLOW_COLOR, value, brightness};
     flow.push_back(expression);
 }
 
-void Flow::add_rgb(uint32_t duration, uint8_t r, uint8_t g, uint8_t b, int8_t brightness) {
-    uint32_t value = (r << 16) + (g << 8) + b;
+void Flow::add_rgb(const uint32_t duration, const uint8_t r, const uint8_t g, const uint8_t b, const int8_t brightness) {
+    const uint32_t value = (r << 16) + (g << 8) + b;
     add_rgb(duration, value, brightness);
 }
 
-void Flow::add_ct(uint32_t duration, uint32_t color_temperature, int8_t brightness) {
-    flow_expression expression = {duration, FLOW_COLOR_TEMPERATURE, color_temperature, brightness};
+void Flow::add_ct(const uint32_t duration, const uint32_t color_temperature, const int8_t brightness) {
+    const flow_expression expression = {duration, FLOW_COLOR_TEMPERATURE, color_temperature, brightness};
     flow.push_back(expression);
 }
 
-void Flow::add_sleep(uint32_t duration) {
-    flow_expression expression = {duration, FLOW_SLEEP, 0, 0};
+void Flow::add_sleep(const uint32_t duration) {
+    const flow_expression expression = {duration, FLOW_SLEEP, 0, 0};
     flow.push_back(expression);
 }
 
-void Flow::add_expression(flow_expression expression) {
+void Flow::add_expression(const flow_expression &expression) {
     flow.push_back(expression);
 }
 
@@ -44,44 +44,44 @@ void Flow::remove_first() {
     flow.erase(flow.begin());
 }
 
-void Flow::remove_at(uint32_t index) {
+void Flow::remove_at(const uint32_t index) {
     flow.erase(flow.begin() + index);
 }
 
-flow_expression Flow::operator[](uint32_t index) {
+flow_expression Flow::operator[](const uint32_t index) const {
     return flow[index];
 }
 
-Flow Flow::operator+(const Flow &flow) {
-    Flow new_flow = Flow();
+Flow Flow::operator+(const Flow &flow) const {
+    auto new_flow = Flow();
     new_flow.flow = this->flow;
     new_flow.flow.insert(new_flow.flow.end(), flow.flow.begin(), flow.flow.end());
     return new_flow;
 }
 
-Flow Flow::operator+(const flow_expression &expression) {
-    Flow new_flow = Flow();
+Flow Flow::operator+(const flow_expression &expression) const {
+    auto new_flow = Flow();
     new_flow.flow = this->flow;
     new_flow.flow.push_back(expression);
     return new_flow;
 }
 
-Flow Flow::operator+(const std::vector<flow_expression> &expressions) {
-    Flow new_flow = Flow();
+Flow Flow::operator+(const std::vector<flow_expression> &expressions) const {
+    auto new_flow = Flow();
     new_flow.flow = this->flow;
     new_flow.flow.insert(new_flow.flow.end(), expressions.begin(), expressions.end());
     return new_flow;
 }
 
-void Flow::set_count(uint8_t count) {
+void Flow::set_count(const uint8_t count) {
     this->count = count;
 }
 
-uint8_t Flow::get_count() {
+uint8_t Flow::get_count() const {
     return count;
 }
 
-uint8_t Flow::get_size() {
+uint8_t Flow::get_size() const {
     return flow.size();
 }
 
@@ -89,6 +89,6 @@ flow_action Flow::getAction() const {
     return action;
 }
 
-void Flow::setAction(flow_action new_action) {
+void Flow::setAction(const flow_action new_action) {
     action = new_action;
 }
