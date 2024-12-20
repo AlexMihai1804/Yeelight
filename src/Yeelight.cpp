@@ -109,7 +109,7 @@ ResponseType Yeelight::connect() {
     }
 }
 
-ResponseType Yeelight::send_command(const char *method, const char *params) {
+ResponseType Yeelight::send_command(const char *method, cJSON *params) {
     uint8_t current_retries = 0;
     while (!client.connected() && current_retries < max_retry) {
         connect();
@@ -117,11 +117,25 @@ ResponseType Yeelight::send_command(const char *method, const char *params) {
         delay(250);
     }
     if (client.connected()) {
-        char command[256];
-        snprintf(command, sizeof(command), "{\"id\":1,\"method\":\"%s\",\"params\":%s}\r\n", method, params);
+        cJSON *root = cJSON_CreateObject();
+        if (!root) {
+            cJSON_Delete(params);
+            return ResponseType::ERROR;
+        }
+        cJSON_AddNumberToObject(root, "id", 1);
+        cJSON_AddStringToObject(root, "method", method);
+        cJSON_AddItemToObject(root, "params", params);
+        char *command = cJSON_PrintUnformatted(root);
+        if (command == nullptr) {
+            cJSON_Delete(root);
+            return ResponseType::ERROR;
+        }
         client.print(command);
+        cJSON_Delete(root);
+        free(command);
         return checkResponse();
     } else {
+        cJSON_Delete(params);
         return ResponseType::CONNECTION_LOST;
     }
 }
@@ -133,273 +147,457 @@ ResponseType Yeelight::set_power_command(bool power, effect effect, uint16_t dur
     if (duration < 30) {
         return ResponseType::INVALID_PARAMS;
     }
-    char params[256];
-    if (mode == MODE_CURRENT) {
-        snprintf(params, sizeof(params), R"(["%s","%s",%d])", power ? "on" : "off",
-                 effect == EFFECT_SMOOTH ? "smooth" : "sudden", duration);
-    } else {
-        snprintf(params, sizeof(params), R"(["%s","%s",%d,%d])", power ? "on" : "off",
-                 effect == EFFECT_SMOOTH ? "smooth" : "sudden", duration, mode);
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateString(power ? "on" : "off"));
+    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
+    if (mode != MODE_CURRENT) {
+        cJSON_AddItemToArray(params, cJSON_CreateNumber(mode));
     }
     return send_command("set_power", params);
 }
 
 ResponseType Yeelight::toggle_command() {
-    return send_command("toggle", "[]");
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    return send_command("toggle", params);
 }
 
 ResponseType Yeelight::set_ct_abx_command(uint16_t ct_value, effect effect, uint16_t duration) {
-    char params[256];
-    snprintf(params, sizeof(params), R"([%d,"%s",%d])", ct_value, effect == EFFECT_SMOOTH ? "smooth" : "sudden",
-             duration);
+    if (!supported_methods.set_ct_abx) {
+        return ResponseType::METHOD_NOT_SUPPORTED;
+    }
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(ct_value));
+    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
     return send_command("set_ct_abx", params);
 }
 
 ResponseType Yeelight::set_rgb_command(uint8_t r, uint8_t g, uint8_t b, effect effect, uint16_t duration) {
     uint32_t rgb = (r << 16) | (g << 8) | b;
-    char params[256];
-    snprintf(params, sizeof(params), R"([%d,"%s",%d])", rgb, effect == EFFECT_SMOOTH ? "smooth" : "sudden", duration);
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(rgb));
+    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
     return send_command("set_rgb", params);
 }
 
 ResponseType Yeelight::set_hsv_command(uint16_t hue, uint8_t sat, effect effect, uint16_t duration) {
-    char params[256];
-    snprintf(params, sizeof(params), R"([%d,%d,"%s",%d])", hue, sat, effect == EFFECT_SMOOTH ? "smooth" : "sudden",
-             duration);
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(hue));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(sat));
+    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
     return send_command("set_hsv", params);
 }
 
 ResponseType Yeelight::set_bright_command(uint8_t bright, effect effect, uint16_t duration) {
-    char params[256];
-    snprintf(params, sizeof(params), R"([%d,"%s",%d])", bright, effect == EFFECT_SMOOTH ? "smooth" : "sudden",
-             duration);
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(bright));
+    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
     return send_command("set_bright", params);
 }
 
 ResponseType Yeelight::set_default() {
-    return send_command("set_default", "[]");
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    return send_command("set_default", params);
 }
 
 ResponseType Yeelight::start_cf_command(uint8_t count, flow_action action, uint8_t size, flow_expression *flow) {
-    char params[1024] = "";
-    char buffer[256];
-    snprintf(buffer, sizeof(buffer), "[%d,%d,\"", count, action);
-    strncat(params, buffer, sizeof(params) - strlen(params) - 1);
-    for (int i = 0; i < size - 1; i++) {
-        snprintf(buffer, sizeof(buffer), "%d,%d,%d,%d,", flow[i].duration, flow[i].mode, flow[i].value,
-                 flow[i].brightness);
-        strncat(params, buffer, sizeof(params) - strlen(params) - 1);
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
     }
-    snprintf(buffer, sizeof(buffer), "%d,%d,%d,%d\"]", flow[size - 1].duration, flow[size - 1].mode,
-             flow[size - 1].value, flow[size - 1].brightness);
-    strncat(params, buffer, sizeof(params) - strlen(params) - 1);
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(count));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(action));
+    std::string flowExpression;
+    for (int i = 0; i < size; i++) {
+        flowExpression += std::to_string(flow[i].duration) + "," + std::to_string(flow[i].mode) + "," +
+                std::to_string(flow[i].value) + "," + std::to_string(flow[i].brightness) + ",";
+    }
+    flowExpression.pop_back();
+    cJSON_AddItemToArray(params, cJSON_CreateString(flowExpression.c_str()));
     return send_command("start_cf", params);
 }
 
 ResponseType Yeelight::stop_cf_command() {
-    return send_command("stop_cf", "[]");
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    return send_command("stop_cf", params);
 }
 
 ResponseType Yeelight::set_scene_rgb_command(uint8_t r, uint8_t g, uint8_t b, uint8_t bright) {
-    char params[256];
     uint32_t rgb = (r << 16) | (g << 8) | b;
-    snprintf(params, sizeof(params), R"(["%s",%d,%d])", "color", rgb, bright);
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateString("color"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(rgb));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(bright));
     return send_command("set_scene", params);
 }
 
 ResponseType Yeelight::set_scene_hsv_command(uint8_t hue, uint8_t sat, uint8_t bright) {
-    char params[256];
-    snprintf(params, sizeof(params), R"(["%s",%d,%d,%d])", "hsv", hue, sat, bright);
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateString("hsv"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(hue));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(sat));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(bright));
     return send_command("set_scene", params);
 }
 
 ResponseType Yeelight::set_scene_ct_command(uint16_t ct, uint8_t bright) {
-    char params[256];
-    snprintf(params, sizeof(params), R"(["%s",%d,%d])", "ct", ct, bright);
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateString("ct"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(ct));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(bright));
     return send_command("set_scene", params);
 }
 
 ResponseType Yeelight::set_scene_auto_delay_off_command(uint8_t brightness, uint32_t duration) {
-    char params[256];
-    snprintf(params, sizeof(params), R"(["%s",%d,%d])", "auto_delay_off", brightness, duration);
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateString("auto_delay_off"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(brightness));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
     return send_command("set_scene", params);
 }
 
 ResponseType Yeelight::set_scene_cf_command(uint32_t count, flow_action action, uint32_t size, flow_expression *flow) {
-    char params[1024] = "";
-    char buffer[256];
-    snprintf(buffer, sizeof(buffer), R"(["cf",%d,%d,")", count, action);
-    strncat(params, buffer, sizeof(params) - strlen(params) - 1);
-    for (int i = 0; i < (int) size - 1; i++) {
-        snprintf(buffer, sizeof(buffer), "%d,%d,%d,%d,", flow[i].duration, flow[i].mode, flow[i].value,
-                 flow[i].brightness);
-        strncat(params, buffer, sizeof(params) - strlen(params) - 1);
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
     }
-    snprintf(buffer, sizeof(buffer), "%d,%d,%d,%d\"]", flow[size - 1].duration, flow[size - 1].mode,
-             flow[size - 1].value, flow[size - 1].brightness);
-    strncat(params, buffer, sizeof(params) - strlen(params) - 1);
+    cJSON_AddItemToArray(params, cJSON_CreateString("cf"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(count));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(action));
+    std::string flowExpression;
+    for (int i = 0; i < size; i++) {
+        flowExpression += std::to_string(flow[i].duration) + "," + std::to_string(flow[i].mode) + "," +
+                std::to_string(flow[i].value) + "," + std::to_string(flow[i].brightness) + ",";
+    }
+    flowExpression.pop_back();
+    cJSON_AddItemToArray(params, cJSON_CreateString(flowExpression.c_str()));
     return send_command("set_scene", params);
 }
 
 ResponseType Yeelight::cron_add_command(uint32_t time) {
-    char params[256];
-    snprintf(params, sizeof(params), R"([0,%d])", time);
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(time));
     return send_command("cron_add", params);
 }
 
 ResponseType Yeelight::cron_del_command() {
-    return send_command("cron_del", "[]");
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    return send_command("cron_del", params);
 }
 
 void Yeelight::set_adjust(ajust_action action, ajust_prop prop) {
-    char params[256];
-    snprintf(params, sizeof(params), R"(["%s","%s"])",
-             action == ADJUST_INCREASE ? "increase" : action == ADJUST_DECREASE ? "decrease" : "circle",
-             prop == ADJUST_BRIGHT ? "bright" : prop == ADJUST_CT ? "ct" : "color");
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return;
+    }
+    if (action == ADJUST_INCREASE) {
+        cJSON_AddItemToArray(params, cJSON_CreateString("increase"));
+    } else if (action == ADJUST_DECREASE) {
+        cJSON_AddItemToArray(params, cJSON_CreateString("decrease"));
+    } else {
+        cJSON_AddItemToArray(params, cJSON_CreateString("circle"));
+    }
+    if (prop == ADJUST_BRIGHT) {
+        cJSON_AddItemToArray(params, cJSON_CreateString("bright"));
+    } else if (prop == ADJUST_CT) {
+        cJSON_AddItemToArray(params, cJSON_CreateString("ct"));
+    } else {
+        cJSON_AddItemToArray(params, cJSON_CreateString("color"));
+    }
     send_command("set_adjust", params);
 }
 
 ResponseType Yeelight::set_name_command(const char *name) {
-    char params[256];
-    snprintf(params, sizeof(params), R"(["%s"])", name);
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateString(name));
     return send_command("set_name", params);
 }
 
 ResponseType Yeelight::bg_set_power_command(bool power, effect effect, uint16_t duration, mode mode) {
-    char params[256];
-    if (mode == MODE_CURRENT) {
-        snprintf(params, sizeof(params), R"(["%s","%s",%d])", power ? "on" : "off",
-                 effect == EFFECT_SMOOTH ? "smooth" : "sudden", duration);
-    } else {
-        snprintf(params, sizeof(params), R"(["%s","%s",%d,%d])", power ? "on" : "off",
-                 effect == EFFECT_SMOOTH ? "smooth" : "sudden", duration, mode);
+    if (!supported_methods.bg_set_power) {
+        return ResponseType::METHOD_NOT_SUPPORTED;
+    }
+    if (duration < 30) {
+        return ResponseType::INVALID_PARAMS;
+    }
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateString(power ? "on" : "off"));
+    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
+    if (mode != MODE_CURRENT) {
+        cJSON_AddItemToArray(params, cJSON_CreateNumber(mode));
     }
     return send_command("bg_set_power", params);
 }
 
 ResponseType Yeelight::bg_toggle_command() {
-    return send_command("bg_toggle", "[]");
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    return send_command("bg_toggle", params);
 }
 
 ResponseType Yeelight::bg_set_ct_abx_command(uint16_t ct_value, effect effect, uint16_t duration) {
-    char params[256];
-    snprintf(params, sizeof(params), R"([%d,"%s",%d])", ct_value, effect == EFFECT_SMOOTH ? "smooth" : "sudden",
-             duration);
+    if (!supported_methods.bg_set_ct_abx) {
+        return ResponseType::METHOD_NOT_SUPPORTED;
+    }
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(ct_value));
+    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
     return send_command("bg_set_ct_abx", params);
 }
 
 ResponseType Yeelight::bg_set_rgb_command(uint8_t r, uint8_t g, uint8_t b, effect effect, uint16_t duration) {
     uint32_t rgb = (r << 16) | (g << 8) | b;
-    char params[256];
-    snprintf(params, sizeof(params), R"([%d,"%s",%d])", rgb, effect == EFFECT_SMOOTH ? "smooth" : "sudden", duration);
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(rgb));
+    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
     return send_command("bg_set_rgb", params);
 }
 
 ResponseType Yeelight::bg_set_hsv_command(uint16_t hue, uint8_t sat, effect effect, uint16_t duration) {
-    char params[256];
-    snprintf(params, sizeof(params), R"([%d,%d,"%s",%d])", hue, sat, effect == EFFECT_SMOOTH ? "smooth" : "sudden",
-             duration);
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(hue));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(sat));
+    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
     return send_command("bg_set_hsv", params);
 }
 
 ResponseType Yeelight::bg_set_bright_command(uint8_t bright, effect effect, uint16_t duration) {
-    char params[256];
-    snprintf(params, sizeof(params), R"([%d,"%s",%d])", bright, effect == EFFECT_SMOOTH ? "smooth" : "sudden",
-             duration);
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(bright));
+    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
     return send_command("bg_set_bright", params);
 }
 
 ResponseType Yeelight::bg_set_default() {
-    return send_command("bg_set_default", "[]");
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    return send_command("bg_set_default", params);
 }
 
 ResponseType Yeelight::bg_set_scene_rgb_command(uint8_t r, uint8_t g, uint8_t b, uint8_t bright) {
-    char params[256];
     uint32_t rgb = (r << 16) | (g << 8) | b;
-    snprintf(params, sizeof(params), R"(["%s",%d,%d])", "color", rgb, bright);
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateString("color"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(rgb));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(bright));
     return send_command("bg_set_scene", params);
 }
 
 ResponseType Yeelight::bg_set_scene_hsv_command(uint8_t hue, uint8_t sat, uint8_t bright) {
-    char params[256];
-    snprintf(params, sizeof(params), R"(["%s",%d,%d,%d])", "hsv", hue, sat, bright);
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateString("hsv"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(hue));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(sat));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(bright));
     return send_command("bg_set_scene", params);
 }
 
 ResponseType Yeelight::bg_set_scene_ct_command(uint16_t ct, uint8_t bright) {
-    char params[256];
-    snprintf(params, sizeof(params), R"(["%s",%d,%d])", "ct", ct, bright);
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateString("ct"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(ct));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(bright));
     return send_command("bg_set_scene", params);
 }
 
 ResponseType Yeelight::bg_set_scene_auto_delay_off_command(uint8_t brightness, uint32_t duration) {
-    char params[256];
-    snprintf(params, sizeof(params), R"(["%s",%d,%d])", "auto_delay_off", brightness, duration);
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateString("auto_delay_off"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(brightness));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
     return send_command("bg_set_scene", params);
 }
 
 ResponseType
 Yeelight::bg_set_scene_cf_command(uint32_t count, flow_action action, uint32_t size, flow_expression *flow) {
-    char params[1024] = "";
-    char buffer[256];
-    snprintf(buffer, sizeof(buffer), R"(["cf",%d,%d,")", count, action);
-    strncat(params, buffer, sizeof(params) - strlen(params) - 1);
-    for (int i = 0; i < (int) size - 1; i++) {
-        snprintf(buffer, sizeof(buffer), "%d,%d,%d,%d,", flow[i].duration, flow[i].mode, flow[i].value,
-                 flow[i].brightness);
-        strncat(params, buffer, sizeof(params) - strlen(params) - 1);
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
     }
-    snprintf(buffer, sizeof(buffer), "%d,%d,%d,%d\"]", flow[size - 1].duration, flow[size - 1].mode,
-             flow[size - 1].value, flow[size - 1].brightness);
-    strncat(params, buffer, sizeof(params) - strlen(params) - 1);
+    cJSON_AddItemToArray(params, cJSON_CreateString("cf"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(count));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(action));
+    std::string flowExpression;
+    for (int i = 0; i < size; i++) {
+        flowExpression += std::to_string(flow[i].duration) + "," + std::to_string(flow[i].mode) + "," +
+                std::to_string(flow[i].value) + "," + std::to_string(flow[i].brightness) + ",";
+    }
+    flowExpression.pop_back();
     return send_command("bg_set_scene", params);
 }
 
 void Yeelight::bg_set_adjust(ajust_action action, ajust_prop prop) {
-    char params[256];
-    snprintf(params, sizeof(params), R"(["%s","%s"])",
-             action == ADJUST_INCREASE ? "increase" : action == ADJUST_DECREASE ? "decrease" : "circle",
-             prop == ADJUST_BRIGHT ? "bright" : prop == ADJUST_CT ? "ct" : "color");
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return;
+    }
+    if (action == ADJUST_INCREASE) {
+        cJSON_AddItemToArray(params, cJSON_CreateString("increase"));
+    } else if (action == ADJUST_DECREASE) {
+        cJSON_AddItemToArray(params, cJSON_CreateString("decrease"));
+    } else {
+        cJSON_AddItemToArray(params, cJSON_CreateString("circle"));
+    }
+    if (prop == ADJUST_BRIGHT) {
+        cJSON_AddItemToArray(params, cJSON_CreateString("bright"));
+    } else if (prop == ADJUST_CT) {
+        cJSON_AddItemToArray(params, cJSON_CreateString("ct"));
+    } else {
+        cJSON_AddItemToArray(params, cJSON_CreateString("color"));
+    }
     send_command("bg_set_adjust", params);
 }
 
 ResponseType Yeelight::dev_toggle_command() {
-    return send_command("dev_toggle", "[]");
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    return send_command("dev_toggle", params);
 }
 
 ResponseType Yeelight::adjust_bright_command(int8_t percentage, uint16_t duration) {
-    char params[256];
-    snprintf(params, sizeof(params), R"(["%d","%d"])", percentage, duration);
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(percentage));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
     return send_command("adjust_bright", params);
 }
 
 ResponseType Yeelight::adjust_ct_command(int8_t percentage, uint16_t duration) {
-    char params[256];
-    snprintf(params, sizeof(params), R"(["%d","%d"])", percentage, duration);
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(percentage));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
     return send_command("adjust_ct", params);
 }
 
 ResponseType Yeelight::adjust_color_command(int8_t percentage, uint16_t duration) {
-    char params[256];
-    snprintf(params, sizeof(params), R"(["%d","%d"])", percentage, duration);
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(percentage));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
     return send_command("adjust_color", params);
 }
 
 ResponseType Yeelight::bg_adjust_bright_command(int8_t percentage, uint16_t duration) {
-    char params[256];
-    snprintf(params, sizeof(params), R"(["%d","%d"])", percentage, duration);
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(percentage));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
     return send_command("bg_adjust_bright", params);
 }
 
 ResponseType Yeelight::bg_adjust_ct_command(int8_t percentage, uint16_t duration) {
-    char params[256];
-    snprintf(params, sizeof(params), R"(["%d","%d"])", percentage, duration);
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(percentage));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
     return send_command("bg_adjust_ct", params);
 }
 
 ResponseType Yeelight::bg_adjust_color_command(int8_t percentage, uint16_t duration) {
-    char params[256];
-    snprintf(params, sizeof(params), R"(["%d","%d"])", percentage, duration);
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(percentage));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
     return send_command("bg_adjust_color", params);
 }
 
@@ -1422,23 +1620,25 @@ ResponseType Yeelight::adjust_color(int8_t percentage, uint16_t duration, LightT
 }
 
 ResponseType Yeelight::bg_start_cf_command(uint8_t count, flow_action action, uint8_t size, flow_expression *flow) {
-    char params[1024] = "";
-    char buffer[256];
-    snprintf(buffer, sizeof(buffer), "[%d,%d,\"", count, action);
-    strncat(params, buffer, sizeof(params) - strlen(params) - 1);
-    for (int i = 0; i < size - 1; i++) {
-        snprintf(buffer, sizeof(buffer), "%d,%d,%d,%d,", flow[i].duration, flow[i].mode, flow[i].value,
-                 flow[i].brightness);
-        strncat(params, buffer, sizeof(params) - strlen(params) - 1);
+    cJSON *params = cJSON_CreateArray();
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(count));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(action));
+    std::string flow_str;
+    for (uint8_t i = 0; i < size; i++) {
+        flow_str += std::to_string(flow[i].duration) + "," + std::to_string(flow[i].mode) + "," +
+                std::to_string(flow[i].value) + ",";
     }
-    snprintf(buffer, sizeof(buffer), "%d,%d,%d,%d\"]", flow[size - 1].duration, flow[size - 1].mode,
-             flow[size - 1].value, flow[size - 1].brightness);
-    strncat(params, buffer, sizeof(params) - strlen(params) - 1);
+    flow_str.pop_back();
+    cJSON_AddItemToArray(params, cJSON_CreateString(flow_str.c_str()));
     return send_command("bg_start_cf", params);
 }
 
 ResponseType Yeelight::bg_stop_cf_command() {
-    return send_command("bg_stop_cf", "");
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ResponseType::ERROR;
+    }
+    return send_command("bg_stop_cf", params);
 }
 
 ResponseType Yeelight::set_scene_flow(Flow flow, LightType lightType) {

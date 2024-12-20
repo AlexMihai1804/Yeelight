@@ -8,6 +8,7 @@
 #ifndef YEELIGHTARDUINO_YEELIGHT_H
 #define YEELIGHTARDUINO_YEELIGHT_H
 
+#include <cJSON.h>
 #include <cstdint>
 #include <WiFiClient.h>
 #include <vector>
@@ -70,7 +71,8 @@ private:
      * @param params The parameters of the command.
      * @return The response type of the command.
      */
-    ResponseType send_command(const char *method, const char *params);
+
+    ResponseType send_command(const char *method, cJSON *params);
 
     /**
      * Sends a bg_set_power command to the Yeelight device.
