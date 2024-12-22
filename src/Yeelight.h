@@ -7,7 +7,7 @@
  */
 #ifndef YEELIGHTARDUINO_YEELIGHT_H
 #define YEELIGHTARDUINO_YEELIGHT_H
-
+#include <Arduino.h>
 #include <cJSON.h>
 #include <cstdint>
 #include <AsyncTCP.h>
