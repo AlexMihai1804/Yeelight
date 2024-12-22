@@ -37,7 +37,7 @@ private:
     AsyncClient *client = nullptr;
     std::string partialResponse;
 
-    void onData(AsyncClient* c, const void* data, size_t len);
+    void onData(AsyncClient *c, const void *data, size_t len);
 
     /**
      * Parses the discovery response and returns a YeelightDevice object.
@@ -531,6 +531,7 @@ public:
      * Starts a flow on the Yeelight device.
      *
      * @param flow The flow to be started.
+     * @param lightType The type of light to control. Use the `LightType` enum to specify the light type.
      * @return The response type indicating the success or failure of the operation.
      */
     ResponseType start_flow(Flow flow, LightType lightType = AUTO);
