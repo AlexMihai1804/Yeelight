@@ -2,43 +2,13 @@
 #include <WiFiUdp.h>
 #include <cJSON.h>
 
-ResponseType Yeelight::checkResponse() {
-    const unsigned long startTime = millis();
-    String line;
-    while (millis() - startTime < timeout) {
-        if (client.available()) {
-            line = client.readStringUntil('\n');
-            line.trim();
-            if (line.length() > 0) {
-                cJSON *root = cJSON_Parse(line.c_str());
-                if (root) {
-                    const cJSON *method = cJSON_GetObjectItem(root, "method");
-                    const cJSON *result = cJSON_GetObjectItem(root, "result");
-                    const cJSON *error = cJSON_GetObjectItem(root, "error");
-                    if (method && strcmp(method->valuestring, "props") == 0) {
-                        // TODO: Update properties
-                        cJSON_Delete(root);
-                        continue;
-                    }
-                    if (result && cJSON_IsArray(result)) {
-                        const cJSON *firstItem = cJSON_GetArrayItem(result, 0);
-                        if (firstItem && cJSON_IsString(firstItem) && strcmp(firstItem->valuestring, "ok") == 0) {
-                            cJSON_Delete(root);
-                            return SUCCESS;
-                        }
-                        cJSON_Delete(root);
-                        return UNEXPECTED_RESPONSE;
-                    }
-                    if (error) {
-                        cJSON_Delete(root);
-                        return ERROR;
-                    }
-                    cJSON_Delete(root);
-                }
-            }
-        } else {
-            delay(10);
+ResponseType Yeelight::checkResponse(const uint16_t id) {
+    const auto start_time = millis();
+    while (millis() - start_time < timeout) {
+        if (responses.count(id)) {
+            return responses[id];
         }
+        delay(10);
     }
     return TIMEOUT;
 }
@@ -96,31 +66,54 @@ void Yeelight::refreshSupportedMethods() {
 }
 
 Yeelight::~Yeelight() {
-    client.stop();
+    if (client) {
+        client->close();
+        delete client;
+        client = nullptr;
+    }
 }
 
 ResponseType Yeelight::connect() {
-    client.connect(ip, port);
-    if (client.connected()) {
-        return SUCCESS;
+    if (client) {
+        client->close();
+        delete client;
+        client = nullptr;
     }
-    return CONNECTION_FAILED;
+    client = new AsyncClient();
+    if (!client) {
+        return ERROR;
+    }
+    //client->onConnect(&Yeelight::onConnect, this);
+    //client->onDisconnect(&Yeelight::onDisconnect, this);
+    //client->onError(&Yeelight::onError, this);
+    client->onData(
+        [](void *arg, AsyncClient *c, const void *data, const size_t len) {
+            auto *that = static_cast<Yeelight *>(arg);
+            that->onData(c, data, len);
+        },
+        this
+    );
+    const IPAddress devIP(ip[0], ip[1], ip[2], ip[3]);
+    if (!client->connect(devIP, port)) {
+        return CONNECTION_FAILED;
+    }
+    return SUCCESS;
 }
 
 ResponseType Yeelight::send_command(const char *method, cJSON *params) {
     uint8_t current_retries = 0;
-    while (!client.connected() && current_retries < max_retry) {
+    while (!is_connected() && current_retries < max_retry) {
         connect();
         current_retries++;
         delay(250);
     }
-    if (client.connected()) {
+    if (is_connected()) {
         cJSON *root = cJSON_CreateObject();
         if (!root) {
             cJSON_Delete(params);
             return ERROR;
         }
-        cJSON_AddNumberToObject(root, "id", 1);
+        cJSON_AddNumberToObject(root, "id", response_id++);
         cJSON_AddStringToObject(root, "method", method);
         cJSON_AddItemToObject(root, "params", params);
         char *command = cJSON_PrintUnformatted(root);
@@ -128,10 +121,11 @@ ResponseType Yeelight::send_command(const char *method, cJSON *params) {
             cJSON_Delete(root);
             return ERROR;
         }
-        client.print(command);
+        client->write(command, strlen(command));
+        client->write("\r\n", 2);
         cJSON_Delete(root);
         free(command);
-        return checkResponse();
+        return checkResponse(response_id - 1);
     }
     cJSON_Delete(params);
     return CONNECTION_LOST;
@@ -321,6 +315,7 @@ ResponseType Yeelight::cron_add_command(const uint32_t time) {
     if (params == nullptr) {
         return ERROR;
     }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(0));
     cJSON_AddItemToArray(params, cJSON_CreateNumber(time));
     return send_command("cron_add", params);
 }
@@ -330,6 +325,7 @@ ResponseType Yeelight::cron_del_command() {
     if (params == nullptr) {
         return ERROR;
     }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(0));
     return send_command("cron_del", params);
 }
 
@@ -514,6 +510,7 @@ ResponseType Yeelight::bg_set_scene_cf_command(const uint32_t count, const flow_
                 std::to_string(flow[i].value) + "," + std::to_string(flow[i].brightness) + ",";
     }
     flowExpression.pop_back();
+    cJSON_AddItemToArray(params, cJSON_CreateString(flowExpression.c_str()));
     return send_command("bg_set_scene", params);
 }
 
@@ -648,6 +645,354 @@ std::vector<YeelightDevice> Yeelight::discoverYeelightDevices(int waitTimeMs) {
     }
     udp.stop();
     return devices;
+}
+
+void Yeelight::onData(AsyncClient *c, const void *data, const size_t len) {
+    const char *chunk = static_cast<const char *>(data);
+    partialResponse.append(chunk, len);
+    size_t pos = partialResponse.find('\n');
+    while (pos != std::string::npos) {
+        std::string line = partialResponse.substr(0, pos);
+        partialResponse.erase(0, pos + 1);
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t')) {
+            line.pop_back();
+        }
+        if (!line.empty()) {
+            cJSON *root = cJSON_Parse(line.c_str());
+            if (root) {
+                if (cJSON_GetObjectItem(root, "id")) {
+                    uint16_t id = cJSON_GetObjectItem(root, "id")->valueint;
+                    if (cJSON_GetObjectItem(root, "result")) {
+                        const cJSON *result_array = cJSON_GetObjectItem(root, "result");
+                        if (result_array == nullptr) {
+                            responses[id] = UNEXPECTED_RESPONSE;
+                            cJSON_Delete(root);
+                            continue;
+                        }
+                        if (!cJSON_IsArray(result_array)) {
+                            responses[id] = UNEXPECTED_RESPONSE;
+                            cJSON_Delete(root);
+                            continue;
+                        }
+                        const cJSON *firstItem = cJSON_GetArrayItem(result_array, 0);
+                        if (firstItem && cJSON_IsString(firstItem) && strcmp(firstItem->valuestring, "ok") == 0) {
+                            responses[id] = SUCCESS;
+                        } else {
+                            if (cJSON_GetArraySize(result_array) < 21) {
+                                cJSON_Delete(root);
+                                responses[id] = UNEXPECTED_RESPONSE;
+                                continue;
+                            }
+                            const cJSON *item = cJSON_GetArrayItem(result_array, 0);
+                            if (cJSON_IsString(item)) {
+                                properties.power = strcmp(item->valuestring, "on") == 0;
+                            }
+                            item = cJSON_GetArrayItem(result_array, 1);
+                            if (cJSON_IsNumber(item)) {
+                                properties.bright = static_cast<uint8_t>(item->valuedouble);
+                            } else if (cJSON_IsString(item)) {
+                                properties.bright = static_cast<uint8_t>(atoi(item->valuestring));
+                            }
+                            item = cJSON_GetArrayItem(result_array, 2);
+                            if (cJSON_IsNumber(item)) {
+                                properties.ct = static_cast<uint16_t>(item->valuedouble);
+                            } else if (cJSON_IsString(item)) {
+                                properties.ct = static_cast<uint16_t>(atoi(item->valuestring));
+                            }
+                            item = cJSON_GetArrayItem(result_array, 3);
+                            if (cJSON_IsNumber(item)) {
+                                properties.rgb = static_cast<uint32_t>(item->valuedouble);
+                            } else if (cJSON_IsString(item)) {
+                                properties.rgb = static_cast<uint32_t>(atoi(item->valuestring));
+                            }
+                            item = cJSON_GetArrayItem(result_array, 4);
+                            if (cJSON_IsNumber(item)) {
+                                properties.hue = static_cast<uint16_t>(item->valuedouble);
+                            } else if (cJSON_IsString(item)) {
+                                properties.hue = static_cast<uint16_t>(atoi(item->valuestring));
+                            }
+                            item = cJSON_GetArrayItem(result_array, 5);
+                            if (cJSON_IsNumber(item)) {
+                                properties.sat = static_cast<uint8_t>(item->valuedouble);
+                            } else if (cJSON_IsString(item)) {
+                                properties.sat = static_cast<uint8_t>(atoi(item->valuestring));
+                            }
+                            item = cJSON_GetArrayItem(result_array, 6);
+                            if (cJSON_IsNumber(item)) {
+                                const auto cm = static_cast<uint8_t>(item->valuedouble);
+                                if (cm == 1) {
+                                    properties.color_mode = COLOR_MODE_RGB;
+                                } else if (cm == 2) {
+                                    properties.color_mode = COLOR_MODE_COLOR_TEMPERATURE;
+                                } else if (cm == 3) {
+                                    properties.color_mode = COLOR_MODE_HSV;
+                                } else {
+                                    properties.color_mode = COLOR_MODE_UNKNOWN;
+                                }
+                            } else if (cJSON_IsString(item)) {
+                                const auto cm = static_cast<uint8_t>(atoi(item->valuestring));
+                                if (cm == 1) {
+                                    properties.color_mode = COLOR_MODE_RGB;
+                                } else if (cm == 2) {
+                                    properties.color_mode = COLOR_MODE_COLOR_TEMPERATURE;
+                                } else if (cm == 3) {
+                                    properties.color_mode = COLOR_MODE_HSV;
+                                } else {
+                                    properties.color_mode = COLOR_MODE_UNKNOWN;
+                                }
+                            }
+                            item = cJSON_GetArrayItem(result_array, 7);
+                            if (cJSON_IsNumber(item)) {
+                                properties.flowing = static_cast<int>(item->valuedouble) == 1;
+                            } else if (cJSON_IsString(item)) {
+                                properties.flowing = atoi(item->valuestring) == 1;
+                            }
+                            item = cJSON_GetArrayItem(result_array, 8);
+                            if (cJSON_IsNumber(item)) {
+                                properties.delayoff = static_cast<uint8_t>(item->valuedouble);
+                            } else if (cJSON_IsString(item)) {
+                                properties.delayoff = static_cast<uint8_t>(atoi(item->valuestring));
+                            }
+                            item = cJSON_GetArrayItem(result_array, 9);
+                            if (cJSON_IsNumber(item)) {
+                                properties.music_on = static_cast<int>(item->valuedouble) == 1;
+                            } else if (cJSON_IsString(item)) {
+                                properties.music_on = atoi(item->valuestring) == 1;
+                            }
+                            item = cJSON_GetArrayItem(result_array, 10);
+                            if (cJSON_IsString(item)) {
+                                properties.name = String(item->valuestring).c_str();
+                            }
+                            item = cJSON_GetArrayItem(result_array, 11);
+                            if (cJSON_IsString(item)) {
+                                properties.bg_power = strcmp(item->valuestring, "on") == 0;
+                            }
+                            item = cJSON_GetArrayItem(result_array, 12);
+                            if (cJSON_IsNumber(item)) {
+                                properties.bg_flowing = static_cast<int>(item->valuedouble) == 1;
+                            } else if (cJSON_IsString(item)) {
+                                properties.bg_flowing = atoi(item->valuestring) == 1;
+                            }
+                            item = cJSON_GetArrayItem(result_array, 13);
+                            if (cJSON_IsNumber(item)) {
+                                properties.bg_ct = static_cast<uint16_t>(item->valuedouble);
+                            } else if (cJSON_IsString(item)) {
+                                properties.bg_ct = static_cast<uint16_t>(atoi(item->valuestring));
+                            }
+                            item = cJSON_GetArrayItem(result_array, 14);
+                            if (cJSON_IsNumber(item)) {
+                                const auto bg_lmode_int = static_cast<uint8_t>(item->valuedouble);
+                                if (bg_lmode_int == 1) {
+                                    properties.bg_color_mode = COLOR_MODE_RGB;
+                                } else if (bg_lmode_int == 2) {
+                                    properties.bg_color_mode = COLOR_MODE_COLOR_TEMPERATURE;
+                                } else if (bg_lmode_int == 3) {
+                                    properties.bg_color_mode = COLOR_MODE_HSV;
+                                } else {
+                                    properties.bg_color_mode = COLOR_MODE_UNKNOWN;
+                                }
+                            } else if (cJSON_IsString(item)) {
+                                const auto bg_lmode_int = static_cast<uint8_t>(atoi(item->valuestring));
+                                if (bg_lmode_int == 1) {
+                                    properties.bg_color_mode = COLOR_MODE_RGB;
+                                } else if (bg_lmode_int == 2) {
+                                    properties.bg_color_mode = COLOR_MODE_COLOR_TEMPERATURE;
+                                } else if (bg_lmode_int == 3) {
+                                    properties.bg_color_mode = COLOR_MODE_HSV;
+                                } else {
+                                    properties.bg_color_mode = COLOR_MODE_UNKNOWN;
+                                }
+                            }
+                            item = cJSON_GetArrayItem(result_array, 15);
+                            if (cJSON_IsNumber(item)) {
+                                properties.bg_bright = static_cast<uint8_t>(item->valuedouble);
+                            } else if (cJSON_IsString(item)) {
+                                properties.bg_bright = static_cast<uint8_t>(atoi(item->valuestring));
+                            }
+                            item = cJSON_GetArrayItem(result_array, 16);
+                            if (cJSON_IsNumber(item)) {
+                                properties.bg_rgb = static_cast<uint32_t>(item->valuedouble);
+                            } else if (cJSON_IsString(item)) {
+                                properties.bg_rgb = static_cast<uint32_t>(atoi(item->valuestring));
+                            }
+                            item = cJSON_GetArrayItem(result_array, 17);
+                            if (cJSON_IsNumber(item)) {
+                                properties.bg_hue = static_cast<uint16_t>(item->valuedouble);
+                            } else if (cJSON_IsString(item)) {
+                                properties.bg_hue = static_cast<uint16_t>(atoi(item->valuestring));
+                            }
+                            item = cJSON_GetArrayItem(result_array, 18);
+                            if (cJSON_IsNumber(item)) {
+                                properties.bg_sat = static_cast<uint8_t>(item->valuedouble);
+                            } else if (cJSON_IsString(item)) {
+                                properties.bg_sat = static_cast<uint8_t>(atoi(item->valuestring));
+                            }
+                            item = cJSON_GetArrayItem(result_array, 19);
+                            if (cJSON_IsNumber(item)) {
+                                properties.nl_br = static_cast<uint8_t>(item->valuedouble);
+                            } else if (cJSON_IsString(item)) {
+                                properties.nl_br = static_cast<uint8_t>(atoi(item->valuestring));
+                            }
+                            item = cJSON_GetArrayItem(result_array, 20);
+                            if (cJSON_IsNumber(item)) {
+                                properties.active_mode = static_cast<int>(item->valuedouble) == 1;
+                            } else if (cJSON_IsString(item)) {
+                                properties.active_mode = atoi(item->valuestring) == 1;
+                            }
+                            responses[id] = SUCCESS;
+                        }
+                    } else if (cJSON_GetObjectItem(root, "error")) {
+                        responses[id] = ERROR;
+                    }
+                } else if (cJSON_GetObjectItem(root, "method")) {
+                    const char *method = cJSON_GetObjectItem(root, "method")->valuestring;
+                    if (strcmp(method, "props") == 0) {
+                        const cJSON *params = cJSON_GetObjectItem(root, "params");
+                        if (!params || !cJSON_IsObject(params)) {
+                            return;
+                        } {
+                            const cJSON *item = cJSON_GetObjectItem(params, "power");
+                            if (item && cJSON_IsString(item)) {
+                                properties.power = strcmp(item->valuestring, "on") == 0;
+                            }
+                        } {
+                            const cJSON *item = cJSON_GetObjectItem(params, "bright");
+                            if (item && cJSON_IsString(item)) {
+                                properties.bright = static_cast<uint8_t>(atoi(item->valuestring));
+                            }
+                        } {
+                            const cJSON *item = cJSON_GetObjectItem(params, "ct");
+                            if (item && cJSON_IsString(item)) {
+                                properties.ct = static_cast<uint16_t>(atoi(item->valuestring));
+                            }
+                        } {
+                            const cJSON *item = cJSON_GetObjectItem(params, "rgb");
+                            if (item && cJSON_IsString(item)) {
+                                properties.rgb = static_cast<uint32_t>(atoi(item->valuestring));
+                            }
+                        } {
+                            const cJSON *item = cJSON_GetObjectItem(params, "hue");
+                            if (item && cJSON_IsString(item)) {
+                                properties.hue = static_cast<uint16_t>(atoi(item->valuestring));
+                            }
+                        } {
+                            const cJSON *item = cJSON_GetObjectItem(params, "sat");
+                            if (item && cJSON_IsString(item)) {
+                                properties.sat = static_cast<uint8_t>(atoi(item->valuestring));
+                            }
+                        } {
+                            const cJSON *item = cJSON_GetObjectItem(params, "color_mode");
+                            if (item && cJSON_IsString(item)) {
+                                const int cm = atoi(item->valuestring);
+                                switch (cm) {
+                                    case 1: properties.color_mode = COLOR_MODE_RGB;
+                                        break;
+                                    case 2: properties.color_mode = COLOR_MODE_COLOR_TEMPERATURE;
+                                        break;
+                                    case 3: properties.color_mode = COLOR_MODE_HSV;
+                                        break;
+                                    default: properties.color_mode = COLOR_MODE_UNKNOWN;
+                                        break;
+                                }
+                            }
+                        } {
+                            const cJSON *item = cJSON_GetObjectItem(params, "flowing");
+                            if (item && cJSON_IsString(item)) {
+                                properties.flowing = (atoi(item->valuestring) == 1);
+                            }
+                        } {
+                            const cJSON *item = cJSON_GetObjectItem(params, "delayoff");
+                            if (item && cJSON_IsString(item)) {
+                                properties.delayoff = static_cast<uint8_t>(atoi(item->valuestring));
+                            }
+                        } {
+                            const cJSON *item = cJSON_GetObjectItem(params, "flow_params");
+                            if (item && cJSON_IsString(item)) {
+                                //properties.flow_params = item->valuestring; // (std::string)
+                            }
+                        } {
+                            const cJSON *item = cJSON_GetObjectItem(params, "music_on");
+                            if (item && cJSON_IsString(item)) {
+                                properties.music_on = (atoi(item->valuestring) == 1);
+                            }
+                        } {
+                            const cJSON *item = cJSON_GetObjectItem(params, "name");
+                            if (item && cJSON_IsString(item)) {
+                                properties.name = item->valuestring; // (std::string)
+                            }
+                        } {
+                            const cJSON *item = cJSON_GetObjectItem(params, "bg_power");
+                            if (item && cJSON_IsString(item)) {
+                                properties.bg_power = (strcmp(item->valuestring, "on") == 0);
+                            }
+                        } {
+                            const cJSON *item = cJSON_GetObjectItem(params, "bg_flowing");
+                            if (item && cJSON_IsString(item)) {
+                                properties.bg_flowing = (atoi(item->valuestring) == 1);
+                            }
+                        } {
+                            const cJSON *item = cJSON_GetObjectItem(params, "bg_flow_params");
+                            if (item && cJSON_IsString(item)) {
+                                //properties.bg_flow_params = item->valuestring;
+                            }
+                        } {
+                            const cJSON *item = cJSON_GetObjectItem(params, "bg_ct");
+                            if (item && cJSON_IsString(item)) {
+                                properties.bg_ct = static_cast<uint16_t>(atoi(item->valuestring));
+                            }
+                        } {
+                            const cJSON *item = cJSON_GetObjectItem(params, "bg_lmode");
+                            if (item && cJSON_IsString(item)) {
+                                const int cm = atoi(item->valuestring);
+                                switch (cm) {
+                                    case 1: properties.bg_color_mode = COLOR_MODE_RGB;
+                                        break;
+                                    case 2: properties.bg_color_mode = COLOR_MODE_COLOR_TEMPERATURE;
+                                        break;
+                                    case 3: properties.bg_color_mode = COLOR_MODE_HSV;
+                                        break;
+                                    default: properties.bg_color_mode = COLOR_MODE_UNKNOWN;
+                                        break;
+                                }
+                            }
+                        } {
+                            const cJSON *item = cJSON_GetObjectItem(params, "bg_bright");
+                            if (item && cJSON_IsString(item)) {
+                                properties.bg_bright = static_cast<uint8_t>(atoi(item->valuestring));
+                            }
+                        } {
+                            const cJSON *item = cJSON_GetObjectItem(params, "bg_rgb");
+                            if (item && cJSON_IsString(item)) {
+                                properties.bg_rgb = static_cast<uint32_t>(atoi(item->valuestring));
+                            }
+                        } {
+                            const cJSON *item = cJSON_GetObjectItem(params, "bg_hue");
+                            if (item && cJSON_IsString(item)) {
+                                properties.bg_hue = static_cast<uint16_t>(atoi(item->valuestring));
+                            }
+                        } {
+                            const cJSON *item = cJSON_GetObjectItem(params, "bg_sat");
+                            if (item && cJSON_IsString(item)) {
+                                properties.bg_sat = static_cast<uint8_t>(atoi(item->valuestring));
+                            }
+                        } {
+                            const cJSON *item = cJSON_GetObjectItem(params, "nl_br");
+                            if (item && cJSON_IsString(item)) {
+                                properties.nl_br = static_cast<uint8_t>(atoi(item->valuestring));
+                            }
+                        } {
+                            const cJSON *item = cJSON_GetObjectItem(params, "active_mode");
+                            if (item && cJSON_IsString(item)) {
+                                properties.active_mode = (atoi(item->valuestring) == 1);
+                            }
+                        }
+                    }
+                }
+                cJSON_Delete(root);
+            }
+        }
+        pos = partialResponse.find('\n');
+    }
 }
 
 YeelightDevice Yeelight::parseDiscoveryResponse(const char *response) {
@@ -1702,7 +2047,7 @@ ResponseType Yeelight::bg_start_cf_command(const uint8_t count, const flow_actio
     std::string flow_str;
     for (uint8_t i = 0; i < size; i++) {
         flow_str += std::to_string(flow[i].duration) + "," + std::to_string(flow[i].mode) + "," +
-                std::to_string(flow[i].value) + ",";
+                std::to_string(flow[i].value) + "," + std::to_string(flow[i].brightness) + ",";
     }
     flow_str.pop_back();
     cJSON_AddItemToArray(params, cJSON_CreateString(flow_str.c_str()));
@@ -1762,24 +2107,9 @@ ResponseType Yeelight::refreshProperties() {
     if (!supported_methods.get_prop) {
         return METHOD_NOT_SUPPORTED;
     }
-    uint8_t current_retries = 0;
-    while (!client.connected() && current_retries < max_retry) {
-        connect();
-        current_retries++;
-        delay(250);
-    }
-    if (!client.connected()) {
-        return CONNECTION_LOST;
-    }
-    cJSON *root = cJSON_CreateObject();
-    if (!root) {
-        return ERROR;
-    }
-    cJSON_AddNumberToObject(root, "id", 1);
-    cJSON_AddStringToObject(root, "method", "get_prop");
     cJSON *params = cJSON_CreateArray();
     if (!params) {
-        cJSON_Delete(root);
+        cJSON_Delete(params);
         return ERROR;
     }
     cJSON_AddItemToArray(params, cJSON_CreateString("power"));
@@ -1803,201 +2133,7 @@ ResponseType Yeelight::refreshProperties() {
     cJSON_AddItemToArray(params, cJSON_CreateString("bg_sat"));
     cJSON_AddItemToArray(params, cJSON_CreateString("nl_br"));
     cJSON_AddItemToArray(params, cJSON_CreateString("active_mode"));
-    cJSON_AddItemToObject(root, "params", params);
-    char *command = cJSON_PrintUnformatted(root);
-    cJSON_Delete(root);
-    if (!command) {
-        return ERROR;
-    }
-    client.print(command);
-    client.print("\r\n");
-    free(command);
-    const unsigned long startTime = millis();
-    String response = "";
-    while (millis() - startTime < timeout) {
-        while (client.available()) {
-            const String chunk = client.readString();
-            response += chunk;
-        }
-        if (response.indexOf("\"result\"") != -1 || response.indexOf("\"error\"") != -1) {
-            break;
-        }
-        delay(10);
-    }
-    if (response.length() == 0) {
-        return TIMEOUT;
-    }
-    cJSON *response_root = cJSON_Parse(response.c_str());
-    if (!response_root) {
-        return ERROR;
-    }
-    const cJSON *result_array = cJSON_GetObjectItem(response_root, "result");
-    if (!result_array || !cJSON_IsArray(result_array)) {
-        cJSON_Delete(response_root);
-        return ERROR;
-    }
-    if (cJSON_GetArraySize(result_array) < 21) {
-        cJSON_Delete(response_root);
-        return ERROR;
-    }
-    const cJSON *item = cJSON_GetArrayItem(result_array, 0);
-    if (cJSON_IsString(item)) {
-        properties.power = strcmp(item->valuestring, "on") == 0;
-    }
-    item = cJSON_GetArrayItem(result_array, 1);
-    if (cJSON_IsNumber(item)) {
-        properties.bright = static_cast<uint8_t>(item->valuedouble);
-    } else if (cJSON_IsString(item)) {
-        properties.bright = static_cast<uint8_t>(atoi(item->valuestring));
-    }
-    item = cJSON_GetArrayItem(result_array, 2);
-    if (cJSON_IsNumber(item)) {
-        properties.ct = static_cast<uint16_t>(item->valuedouble);
-    } else if (cJSON_IsString(item)) {
-        properties.ct = static_cast<uint16_t>(atoi(item->valuestring));
-    }
-    item = cJSON_GetArrayItem(result_array, 3);
-    if (cJSON_IsNumber(item)) {
-        properties.rgb = static_cast<uint32_t>(item->valuedouble);
-    } else if (cJSON_IsString(item)) {
-        properties.rgb = static_cast<uint32_t>(atoi(item->valuestring));
-    }
-    item = cJSON_GetArrayItem(result_array, 4);
-    if (cJSON_IsNumber(item)) {
-        properties.hue = static_cast<uint16_t>(item->valuedouble);
-    } else if (cJSON_IsString(item)) {
-        properties.hue = static_cast<uint16_t>(atoi(item->valuestring));
-    }
-    item = cJSON_GetArrayItem(result_array, 5);
-    if (cJSON_IsNumber(item)) {
-        properties.sat = static_cast<uint8_t>(item->valuedouble);
-    } else if (cJSON_IsString(item)) {
-        properties.sat = static_cast<uint8_t>(atoi(item->valuestring));
-    }
-    item = cJSON_GetArrayItem(result_array, 6);
-    if (cJSON_IsNumber(item)) {
-        const auto cm = static_cast<uint8_t>(item->valuedouble);
-        if (cm == 1) {
-            properties.color_mode = COLOR_MODE_RGB;
-        } else if (cm == 2) {
-            properties.color_mode = COLOR_MODE_COLOR_TEMPERATURE;
-        } else if (cm == 3) {
-            properties.color_mode = COLOR_MODE_HSV;
-        } else {
-            properties.color_mode = COLOR_MODE_UNKNOWN;
-        }
-    } else if (cJSON_IsString(item)) {
-        const auto cm = static_cast<uint8_t>(atoi(item->valuestring));
-        if (cm == 1) {
-            properties.color_mode = COLOR_MODE_RGB;
-        } else if (cm == 2) {
-            properties.color_mode = COLOR_MODE_COLOR_TEMPERATURE;
-        } else if (cm == 3) {
-            properties.color_mode = COLOR_MODE_HSV;
-        } else {
-            properties.color_mode = COLOR_MODE_UNKNOWN;
-        }
-    }
-    item = cJSON_GetArrayItem(result_array, 7);
-    if (cJSON_IsNumber(item)) {
-        properties.flowing = static_cast<int>(item->valuedouble) == 1;
-    } else if (cJSON_IsString(item)) {
-        properties.flowing = atoi(item->valuestring) == 1;
-    }
-    item = cJSON_GetArrayItem(result_array, 8);
-    if (cJSON_IsNumber(item)) {
-        properties.delayoff = static_cast<uint8_t>(item->valuedouble);
-    } else if (cJSON_IsString(item)) {
-        properties.delayoff = static_cast<uint8_t>(atoi(item->valuestring));
-    }
-    item = cJSON_GetArrayItem(result_array, 9);
-    if (cJSON_IsNumber(item)) {
-        properties.music_on = static_cast<int>(item->valuedouble) == 1;
-    } else if (cJSON_IsString(item)) {
-        properties.music_on = atoi(item->valuestring) == 1;
-    }
-    item = cJSON_GetArrayItem(result_array, 10);
-    if (cJSON_IsString(item)) {
-        properties.name = String(item->valuestring).c_str();
-    }
-    item = cJSON_GetArrayItem(result_array, 11);
-    if (cJSON_IsString(item)) {
-        properties.bg_power = strcmp(item->valuestring, "on") == 0;
-    }
-    item = cJSON_GetArrayItem(result_array, 12);
-    if (cJSON_IsNumber(item)) {
-        properties.bg_flowing = static_cast<int>(item->valuedouble) == 1;
-    } else if (cJSON_IsString(item)) {
-        properties.bg_flowing = atoi(item->valuestring) == 1;
-    }
-    item = cJSON_GetArrayItem(result_array, 13);
-    if (cJSON_IsNumber(item)) {
-        properties.bg_ct = static_cast<uint16_t>(item->valuedouble);
-    } else if (cJSON_IsString(item)) {
-        properties.bg_ct = static_cast<uint16_t>(atoi(item->valuestring));
-    }
-    item = cJSON_GetArrayItem(result_array, 14);
-    if (cJSON_IsNumber(item)) {
-        const auto bg_lmode_int = static_cast<uint8_t>(item->valuedouble);
-        if (bg_lmode_int == 1) {
-            properties.bg_color_mode = COLOR_MODE_RGB;
-        } else if (bg_lmode_int == 2) {
-            properties.bg_color_mode = COLOR_MODE_COLOR_TEMPERATURE;
-        } else if (bg_lmode_int == 3) {
-            properties.bg_color_mode = COLOR_MODE_HSV;
-        } else {
-            properties.bg_color_mode = COLOR_MODE_UNKNOWN;
-        }
-    } else if (cJSON_IsString(item)) {
-        const auto bg_lmode_int = static_cast<uint8_t>(atoi(item->valuestring));
-        if (bg_lmode_int == 1) {
-            properties.bg_color_mode = COLOR_MODE_RGB;
-        } else if (bg_lmode_int == 2) {
-            properties.bg_color_mode = COLOR_MODE_COLOR_TEMPERATURE;
-        } else if (bg_lmode_int == 3) {
-            properties.bg_color_mode = COLOR_MODE_HSV;
-        } else {
-            properties.bg_color_mode = COLOR_MODE_UNKNOWN;
-        }
-    }
-    item = cJSON_GetArrayItem(result_array, 15);
-    if (cJSON_IsNumber(item)) {
-        properties.bg_bright = static_cast<uint8_t>(item->valuedouble);
-    } else if (cJSON_IsString(item)) {
-        properties.bg_bright = static_cast<uint8_t>(atoi(item->valuestring));
-    }
-    item = cJSON_GetArrayItem(result_array, 16);
-    if (cJSON_IsNumber(item)) {
-        properties.bg_rgb = static_cast<uint32_t>(item->valuedouble);
-    } else if (cJSON_IsString(item)) {
-        properties.bg_rgb = static_cast<uint32_t>(atoi(item->valuestring));
-    }
-    item = cJSON_GetArrayItem(result_array, 17);
-    if (cJSON_IsNumber(item)) {
-        properties.bg_hue = static_cast<uint16_t>(item->valuedouble);
-    } else if (cJSON_IsString(item)) {
-        properties.bg_hue = static_cast<uint16_t>(atoi(item->valuestring));
-    }
-    item = cJSON_GetArrayItem(result_array, 18);
-    if (cJSON_IsNumber(item)) {
-        properties.bg_sat = static_cast<uint8_t>(item->valuedouble);
-    } else if (cJSON_IsString(item)) {
-        properties.bg_sat = static_cast<uint8_t>(atoi(item->valuestring));
-    }
-    item = cJSON_GetArrayItem(result_array, 19);
-    if (cJSON_IsNumber(item)) {
-        properties.nl_br = static_cast<uint8_t>(item->valuedouble);
-    } else if (cJSON_IsString(item)) {
-        properties.nl_br = static_cast<uint8_t>(atoi(item->valuestring));
-    }
-    item = cJSON_GetArrayItem(result_array, 20);
-    if (cJSON_IsNumber(item)) {
-        properties.active_mode = static_cast<int>(item->valuedouble) == 1;
-    } else if (cJSON_IsString(item)) {
-        properties.active_mode = atoi(item->valuestring) == 1;
-    }
-    cJSON_Delete(response_root);
-    return SUCCESS;
+    return send_command("get_prop", params);
 }
 
 YeelightProperties Yeelight::getProperties() {
@@ -2005,8 +2141,10 @@ YeelightProperties Yeelight::getProperties() {
 }
 
 ResponseType Yeelight::connect(const uint8_t *ip, const uint16_t port) {
-    if (client.connected()) {
-        client.stop();
+    if (is_connected()) {
+        client->close();
+        delete client;
+        client = nullptr;
     }
     for (uint8_t i = 0; i < 4; i++) {
         this->ip[i] = ip[i];
@@ -2036,8 +2174,8 @@ Yeelight::Yeelight() {
     properties = {};
 }
 
-bool Yeelight::is_connected() {
-    return client.connected();
+bool Yeelight::is_connected() const {
+    return (client && client->connected());
 }
 
 void Yeelight::set_timeout(const uint16_t timeout) {

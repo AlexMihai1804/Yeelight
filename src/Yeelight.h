@@ -10,12 +10,12 @@
 
 #include <cJSON.h>
 #include <cstdint>
-#include <WiFiClient.h>
+#include <AsyncTCP.h>
 #include <vector>
 #include <Flow.h>
 #include <Yeelight_enums.h>
 #include <Yeelight_structs.h>
-
+#include <map>
 /**
  * @class Yeelight
  * @brief Represents a Yeelight device.
@@ -28,11 +28,17 @@ class Yeelight {
 private:
     uint8_t ip[4]{}; // The IP address of the Yeelight device
     uint16_t port; // The port number to connect to
-    WiFiClient client; // The client object for establishing a connection
     SupportedMethods supported_methods; // The supported methods of the Yeelight device
     uint16_t timeout = 5000; // The timeout value for communication with the device
     uint8_t max_retry = 3; // The maximum number of retries for failed commands
     YeelightProperties properties; // The properties of the Yeelight device
+    std::map<uint16_t, ResponseType> responses; // The map of response types for commands
+    uint16_t response_id = 1; // The ID of the current response
+    AsyncClient *client = nullptr;
+    std::string partialResponse;
+
+    void onData(AsyncClient* c, const void* data, size_t len);
+
     /**
      * Parses the discovery response and returns a YeelightDevice object.
      *
@@ -124,7 +130,7 @@ private:
      *
      * @return The response type of the command.
      */
-    ResponseType checkResponse();
+    ResponseType checkResponse(uint16_t id);
 
     /**
      * Sends a set_ct_abx command to the Yeelight device.
@@ -427,7 +433,8 @@ private:
      * @param flow An array of flow expressions that define the flow.
      * @return The response type indicating the success or failure of the command.
      */
-    ResponseType bg_set_scene_cf_command(uint32_t count, flow_action action, uint32_t size, const flow_expression *flow);
+    ResponseType bg_set_scene_cf_command(uint32_t count, flow_action action, uint32_t size,
+                                         const flow_expression *flow);
 
 public:
     /**
@@ -485,7 +492,7 @@ public:
      *
      * @return true if the device is connected, false otherwise.
      */
-    bool is_connected();
+    bool is_connected() const;
 
     /**
      * Retrieves the supported methods of the Yeelight device.
