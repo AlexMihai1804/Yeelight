@@ -3,6 +3,7 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 std::map<uint32_t, Yeelight *> Yeelight::devices;
+AsyncServer *Yeelight::music_mode_server = nullptr;
 
 ResponseType Yeelight::checkResponse(const uint16_t id) {
     const auto start_time = millis();
