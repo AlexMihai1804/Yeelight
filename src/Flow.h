@@ -150,8 +150,23 @@ public:
      */
     uint8_t get_size() const;
 
+    /**
+     * @brief Retrieves the current flow action.
+     *
+     * This function returns the flow_action enumeration which indicates how
+     * the light flow is managed in terms of transitions or color effects.
+     * 
+     * @return The flow_action associated with the current object.
+     */
     flow_action getAction() const;
 
+    /**
+     * @brief Sets the action for the flow.
+     * 
+     * This function sets the action to be performed during the flow.
+     * 
+     * @param new_action The new action to be set for the flow.
+     */
     void setAction(flow_action new_action);
 };
 
