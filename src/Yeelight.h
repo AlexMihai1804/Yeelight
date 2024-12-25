@@ -8,14 +8,12 @@
 #ifndef YEELIGHTARDUINO_YEELIGHT_H
 #define YEELIGHTARDUINO_YEELIGHT_H
 #include <Arduino.h>
-#include <cJSON.h>
-#include <cstdint>
 #include <AsyncTCP.h>
-#include <vector>
+#include <cJSON.h>
 #include <Flow.h>
+#include <map>
 #include <Yeelight_enums.h>
 #include <Yeelight_structs.h>
-#include <map>
 /**
  * @class Yeelight
  * @brief Represents a Yeelight device.
@@ -29,13 +27,24 @@ private:
     uint8_t ip[4]{}; // The IP address of the Yeelight device
     uint16_t port; // The port number to connect to
     SupportedMethods supported_methods; // The supported methods of the Yeelight device
-    uint16_t timeout = 5000; // The timeout value for communication with the device
-    uint8_t max_retry = 3; // The maximum number of retries for failed commands
+    uint16_t timeout; // The timeout value for communication with the device
+    uint8_t max_retry; // The maximum number of retries for failed commands
     YeelightProperties properties; // The properties of the Yeelight device
     std::map<uint16_t, ResponseType> responses; // The map of response types for commands
-    uint16_t response_id = 1; // The ID of the current response
+    uint16_t response_id; // The ID of the current response
     AsyncClient *client = nullptr;
+    AsyncClient *music_client = nullptr;
     std::string partialResponse;
+    bool music_mode;
+    bool closingManually = false;
+    static AsyncServer *music_mode_server;
+    static std::map<uint32_t, Yeelight *> devices;
+
+    void onMainClientDisconnect(const AsyncClient *c);
+
+    void onMusicDisconnect(const AsyncClient *c);
+
+    static void handleNewClient(void *arg, AsyncClient *client);
 
     void onData(AsyncClient *c, const void *data, size_t len);
 
@@ -46,6 +55,10 @@ private:
      * @return A YeelightDevice object representing the parsed response.
      */
     static YeelightDevice parseDiscoveryResponse(const char *response);
+
+    static bool createMusicModeServer();
+
+    ResponseType set_music_command(bool power, const uint8_t *host = nullptr, uint16_t port = 55443);
 
     /**
      * Sends a start_cf command to the Yeelight device.
@@ -493,6 +506,8 @@ public:
      * @return true if the device is connected, false otherwise.
      */
     bool is_connected() const;
+
+    bool is_connected_music() const;
 
     /**
      * Retrieves the supported methods of the Yeelight device.
@@ -985,6 +1000,12 @@ public:
      * @return The response type indicating the success or failure of the operation.
      */
     ResponseType set_device_name(const std::string &name);
+
+    ResponseType set_music_mode(bool enabled);
+
+    ResponseType enable_music_mode();
+
+    ResponseType disable_music_mode();
 
     /**
      * Adjusts the brightness of the Yeelight device.

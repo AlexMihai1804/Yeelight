@@ -67,18 +67,18 @@ struct SupportedMethods
  */
 struct YeelightDevice
 {
-    uint8_t ip[4];                      /**< IP address of the device */
-    uint16_t port;                      /**< Port number of the device */
+    uint8_t ip[4]{};                      /**< IP address of the device */
+    uint16_t port{};                      /**< Port number of the device */
     std::string model;                  /**< Model of the device */
-    uint16_t fw_ver;                    /**< Firmware version of the device */
-    bool power;                         /**< Power state of the device */
-    uint8_t bright;                     /**< Brightness level of the device */
-    uint16_t ct;                        /**< Color temperature of the device */
-    uint32_t rgb;                       /**< RGB color value of the device */
-    uint8_t hue;                        /**< Hue value of the device */
-    uint8_t sat;                        /**< Saturation value of the device */
+    uint16_t fw_ver{};                    /**< Firmware version of the device */
+    bool power{};                         /**< Power state of the device */
+    uint8_t bright{};                     /**< Brightness level of the device */
+    uint16_t ct{};                        /**< Color temperature of the device */
+    uint32_t rgb{};                       /**< RGB color value of the device */
+    uint8_t hue{};                        /**< Hue value of the device */
+    uint8_t sat{};                        /**< Saturation value of the device */
     std::string name;                   /**< Name of the device */
-    SupportedMethods supported_methods; /**< Supported methods of the device */
+    SupportedMethods supported_methods{}; /**< Supported methods of the device */
 };
 
 /**

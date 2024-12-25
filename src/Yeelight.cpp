@@ -1,6 +1,8 @@
 #include "Yeelight.h"
-#include <WiFiUdp.h>
 #include <cJSON.h>
+#include <WiFi.h>
+#include <WiFiUdp.h>
+std::map<uint32_t, Yeelight *> Yeelight::devices;
 
 ResponseType Yeelight::checkResponse(const uint16_t id) {
     const auto start_time = millis();
@@ -13,18 +15,24 @@ ResponseType Yeelight::checkResponse(const uint16_t id) {
     return TIMEOUT;
 }
 
-Yeelight::Yeelight(const uint8_t ip[4], const uint16_t port) : port(port) {
+Yeelight::Yeelight(const uint8_t ip[4], const uint16_t port) : port(port), supported_methods(), timeout(5000),
+                                                               max_retry(3), response_id(1), music_mode(false) {
     for (int i = 0; i < 4; i++) {
         this->ip[i] = ip[i];
     }
+    const uint32_t ip32 = ip[0] << 24 | ip[1] << 16 | ip[2] << 8 | ip[3];
+    devices[ip32] = this;
     refreshSupportedMethods();
     connect();
 }
 
-Yeelight::Yeelight(const YeelightDevice &device) : port(device.port), supported_methods(device.supported_methods) {
+Yeelight::Yeelight(const YeelightDevice &device) : port(device.port), supported_methods(device.supported_methods),
+                                                   timeout(5000), max_retry(3), response_id(1), music_mode(false) {
     for (int i = 0; i < 4; i++) {
         ip[i] = device.ip[i];
     }
+    const uint32_t ip32 = device.ip[0] << 24 | device.ip[1] << 16 | device.ip[2] << 8 | device.ip[3];
+    devices[ip32] = this;
     connect();
 }
 
@@ -67,47 +75,102 @@ void Yeelight::refreshSupportedMethods() {
 
 Yeelight::~Yeelight() {
     if (client) {
+        closingManually = true;
         client->close();
         delete client;
         client = nullptr;
+    }
+    if (music_client) {
+        music_client->close();
+        music_client = nullptr;
+    }
+    if (music_mode_server) {
+        music_mode_server->end();
+        delete music_mode_server;
+        music_mode_server = nullptr;
+    }
+    const uint32_t ip32 = static_cast<uint32_t>(ip[0]) << 24 | static_cast<uint32_t>(ip[1]) << 16 | static_cast<
+                              uint32_t>(ip[2]) << 8 | ip[3];
+    const auto it = devices.find(ip32);
+    if (it != devices.end() && it->second == this) {
+        devices.erase(it);
     }
 }
 
 ResponseType Yeelight::connect() {
     if (client) {
+        closingManually = true;
         client->close();
-        delete client;
-        client = nullptr;
     }
     client = new AsyncClient();
     if (!client) {
+        closingManually = false;
         return ERROR;
     }
-    //client->onConnect(&Yeelight::onConnect, this);
-    //client->onDisconnect(&Yeelight::onDisconnect, this);
-    //client->onError(&Yeelight::onError, this);
-    client->onData(
-        [](void *arg, AsyncClient *c, const void *data, const size_t len) {
-            auto *that = static_cast<Yeelight *>(arg);
-            that->onData(c, data, len);
-        },
-        this
-    );
+    /*
+    client->onConnect([](void* arg, AsyncClient* c) {
+        auto* that = static_cast<Yeelight*>(arg);
+        that->onMainClientConnect(c);
+    }, this);
+    */
+    client->onDisconnect([](void *arg, const AsyncClient *c) {
+        auto *that = static_cast<Yeelight *>(arg);
+        that->onMainClientDisconnect(c);
+    }, this);
+    /*
+    client->onError([](void* arg, AsyncClient* c, int8_t error) {
+        auto* that = static_cast<Yeelight*>(arg);
+        that->onMainClientError(c, error);
+    }, this);
+    */
+    client->onData([](void *arg, AsyncClient *c, const void *data, const size_t len) {
+        auto *that = static_cast<Yeelight *>(arg);
+        that->onData(c, data, len);
+    }, this);
+
     const IPAddress devIP(ip[0], ip[1], ip[2], ip[3]);
     if (!client->connect(devIP, port)) {
+        delete client;
+        client = nullptr;
+        closingManually = false;
         return CONNECTION_FAILED;
     }
+    closingManually = false;
     return SUCCESS;
 }
 
 ResponseType Yeelight::send_command(const char *method, cJSON *params) {
-    uint8_t current_retries = 0;
-    while (!is_connected() && current_retries < max_retry) {
-        connect();
-        current_retries++;
-        delay(250);
+    if (!music_mode) {
+        uint8_t current_retries = 0;
+        while (!is_connected() && current_retries < max_retry) {
+            connect();
+            current_retries++;
+            delay(250);
+        }
+        if (is_connected()) {
+            cJSON *root = cJSON_CreateObject();
+            if (!root) {
+                cJSON_Delete(params);
+                return ERROR;
+            }
+            cJSON_AddNumberToObject(root, "id", response_id++);
+            cJSON_AddStringToObject(root, "method", method);
+            cJSON_AddItemToObject(root, "params", params);
+            char *command = cJSON_PrintUnformatted(root);
+            if (command == nullptr) {
+                cJSON_Delete(root);
+                return ERROR;
+            }
+            client->write(command, strlen(command));
+            client->write("\r\n", 2);
+            cJSON_Delete(root);
+            free(command);
+            return checkResponse(response_id - 1);
+        }
+        cJSON_Delete(params);
+        return CONNECTION_LOST;
     }
-    if (is_connected()) {
+    if (is_connected_music()) {
         cJSON *root = cJSON_CreateObject();
         if (!root) {
             cJSON_Delete(params);
@@ -121,8 +184,8 @@ ResponseType Yeelight::send_command(const char *method, cJSON *params) {
             cJSON_Delete(root);
             return ERROR;
         }
-        client->write(command, strlen(command));
-        client->write("\r\n", 2);
+        music_client->write(command, strlen(command));
+        music_client->write("\r\n", 2);
         cJSON_Delete(root);
         free(command);
         return checkResponse(response_id - 1);
@@ -648,7 +711,7 @@ std::vector<YeelightDevice> Yeelight::discoverYeelightDevices(int waitTimeMs) {
 }
 
 void Yeelight::onData(AsyncClient *c, const void *data, const size_t len) {
-    const char *chunk = static_cast<const char *>(data);
+    const auto chunk = static_cast<const char *>(data);
     partialResponse.append(chunk, len);
     size_t pos = partialResponse.find('\n');
     while (pos != std::string::npos) {
@@ -898,7 +961,7 @@ void Yeelight::onData(AsyncClient *c, const void *data, const size_t len) {
                         } {
                             const cJSON *item = cJSON_GetObjectItem(params, "flowing");
                             if (item && cJSON_IsString(item)) {
-                                properties.flowing = (atoi(item->valuestring) == 1);
+                                properties.flowing = atoi(item->valuestring) == 1;
                             }
                         } {
                             const cJSON *item = cJSON_GetObjectItem(params, "delayoff");
@@ -913,7 +976,7 @@ void Yeelight::onData(AsyncClient *c, const void *data, const size_t len) {
                         } {
                             const cJSON *item = cJSON_GetObjectItem(params, "music_on");
                             if (item && cJSON_IsString(item)) {
-                                properties.music_on = (atoi(item->valuestring) == 1);
+                                properties.music_on = atoi(item->valuestring) == 1;
                             }
                         } {
                             const cJSON *item = cJSON_GetObjectItem(params, "name");
@@ -923,12 +986,12 @@ void Yeelight::onData(AsyncClient *c, const void *data, const size_t len) {
                         } {
                             const cJSON *item = cJSON_GetObjectItem(params, "bg_power");
                             if (item && cJSON_IsString(item)) {
-                                properties.bg_power = (strcmp(item->valuestring, "on") == 0);
+                                properties.bg_power = strcmp(item->valuestring, "on") == 0;
                             }
                         } {
                             const cJSON *item = cJSON_GetObjectItem(params, "bg_flowing");
                             if (item && cJSON_IsString(item)) {
-                                properties.bg_flowing = (atoi(item->valuestring) == 1);
+                                properties.bg_flowing = atoi(item->valuestring) == 1;
                             }
                         } {
                             const cJSON *item = cJSON_GetObjectItem(params, "bg_flow_params");
@@ -983,7 +1046,7 @@ void Yeelight::onData(AsyncClient *c, const void *data, const size_t len) {
                         } {
                             const cJSON *item = cJSON_GetObjectItem(params, "active_mode");
                             if (item && cJSON_IsString(item)) {
-                                properties.active_mode = (atoi(item->valuestring) == 1);
+                                properties.active_mode = atoi(item->valuestring) == 1;
                             }
                         }
                     }
@@ -1168,6 +1231,29 @@ YeelightDevice Yeelight::parseDiscoveryResponse(const char *response) {
         }
     }
     return device;
+}
+
+bool Yeelight::createMusicModeServer() {
+    if (music_mode_server) {
+        return false;
+    }
+    music_mode_server = new AsyncServer(55443);
+    music_mode_server->onClient(handleNewClient, nullptr);
+    music_mode_server->begin();
+    return true;
+}
+
+ResponseType Yeelight::set_music_command(const bool power, const uint8_t *host, const uint16_t port) {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(power));
+    const std::string hostStr = std::to_string(host[0]) + "." + std::to_string(host[1]) + "." + std::to_string(host[2])
+                                + "." + std::to_string(host[3]);
+    cJSON_AddItemToArray(params, cJSON_CreateString(hostStr.c_str()));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(port));
+    return send_command("set_music", params);
 }
 
 ResponseType Yeelight::start_flow(Flow flow, const LightType lightType) {
@@ -1910,6 +1996,45 @@ ResponseType Yeelight::set_device_name(const std::string &name) {
     return set_device_name(name.c_str());
 }
 
+ResponseType Yeelight::set_music_mode(const bool enabled) {
+    if (!supported_methods.set_music) {
+        return METHOD_NOT_SUPPORTED;
+    }
+    if (enabled) {
+        if (client && client->connected()) {
+            closingManually = true;
+            client->close();
+        }
+        createMusicModeServer();
+        IPAddress loc = WiFi.localIP();
+        const uint8_t ip4[4] = {loc[0], loc[1], loc[2], loc[3]};
+        const auto resp = set_music_command(true, ip4, 55443);
+        if (resp != SUCCESS) {
+            return resp;
+        }
+        music_mode = true;
+        return SUCCESS;
+    }
+    const auto resp = set_music_command(false);
+    if (resp != SUCCESS) {
+        return resp;
+    }
+    if (music_client) {
+        music_client->close();
+    }
+    music_mode = false;
+    connect();
+    return SUCCESS;
+}
+
+ResponseType Yeelight::enable_music_mode() {
+    return set_music_mode(true);
+}
+
+ResponseType Yeelight::disable_music_mode() {
+    return set_music_mode(false);
+}
+
 ResponseType Yeelight::adjust_brightness(const int8_t percentage, const LightType lightType) {
     return adjust_brightness(percentage, 500, lightType);
 }
@@ -2149,33 +2274,95 @@ ResponseType Yeelight::connect(const uint8_t *ip, const uint16_t port) {
     for (uint8_t i = 0; i < 4; i++) {
         this->ip[i] = ip[i];
     }
+    const uint32_t ip32 = ip[0] << 24 | ip[1] << 16 | ip[2] << 8 | ip[3];
+    devices[ip32] = this;
     this->port = port;
     refreshSupportedMethods();
     return connect();
+}
+
+void Yeelight::onMainClientDisconnect(const AsyncClient *c) {
+    if (client == c) {
+        delete client;
+        client = nullptr;
+    }
+    if (!closingManually && !music_mode) {
+        connect();
+    }
+    closingManually = false;
+}
+
+void Yeelight::onMusicDisconnect(const AsyncClient *c) {
+    if (music_client == c) {
+        music_client = nullptr;
+    }
+    music_mode = false;
+    connect();
+}
+
+void Yeelight::handleNewClient(void *arg, AsyncClient *client) {
+    if (!client) return;
+    IPAddress remoteIP = client->remoteIP();
+    const uint8_t r0 = remoteIP[0];
+    const uint8_t r1 = remoteIP[1];
+    const uint8_t r3 = remoteIP[3];
+    const uint8_t r2 = remoteIP[2];
+    const uint32_t remoteIP32 = static_cast<uint32_t>(r0) << 24 | static_cast<uint32_t>(r1) << 16 | static_cast<
+                                    uint32_t>(r2) << 8 | static_cast<uint32_t>(r3);
+    auto &ip2yee = devices;
+    const auto it = ip2yee.find(remoteIP32);
+    if (it == ip2yee.end()) {
+        client->close();
+        return;
+    }
+    Yeelight *y = it->second;
+    /*
+    client->onConnect([](void* arg2, AsyncClient* c) {
+        auto* that = static_cast<Yeelight*>(arg2);
+        that->onMusicConnect(c);
+    }, y);
+    */
+    client->onDisconnect([](void *arg2, const AsyncClient *c) {
+        auto *that = static_cast<Yeelight *>(arg2);
+        that->onMusicDisconnect(c);
+    }, y);
+    /*
+    client->onError([](void* arg2, AsyncClient* c, int8_t error) {
+        auto* that = static_cast<Yeelight*>(arg2);
+        that->onMusicError(c, error);
+    }, y);
+    */
+    client->onData([](void *arg2, AsyncClient *c, const void *data, const size_t len) {
+        auto *that = static_cast<Yeelight *>(arg2);
+        that->onData(c, data, len);
+    }, y);
+    y->music_client = client;
 }
 
 ResponseType Yeelight::connect(const YeelightDevice &device) {
     for (int i = 0; i < 4; ++i) {
         this->ip[i] = device.ip[i];
     }
+    const uint32_t ip32 = device.ip[0] << 24 | device.ip[1] << 16 | device.ip[2] << 8 | device.ip[3];
+    devices[ip32] = this;
     this->port = device.port;
     supported_methods = device.supported_methods;
     return connect();
 }
 
-Yeelight::Yeelight() {
+Yeelight::Yeelight(): port(0), supported_methods(), timeout(5000), max_retry(5), properties(), response_id(1),
+                      music_mode(false) {
     for (uint8_t &i: ip) {
         i = 0;
     }
-    port = 0;
-    timeout = 1000;
-    max_retry = 5;
-    supported_methods = {};
-    properties = {};
 }
 
 bool Yeelight::is_connected() const {
-    return (client && client->connected());
+    return client && client->connected();
+}
+
+bool Yeelight::is_connected_music() const {
+    return music_client && music_client->connected();
 }
 
 void Yeelight::set_timeout(const uint16_t timeout) {
