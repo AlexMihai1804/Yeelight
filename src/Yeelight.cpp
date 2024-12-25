@@ -189,7 +189,7 @@ ResponseType Yeelight::send_command(const char *method, cJSON *params) {
         music_client->write("\r\n", 2);
         cJSON_Delete(root);
         free(command);
-        return checkResponse(response_id - 1);
+        return SUCCESS;
     }
     cJSON_Delete(params);
     return CONNECTION_LOST;
