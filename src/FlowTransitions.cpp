@@ -95,7 +95,7 @@ std::vector<flow_expression> FlowTransitions::christmas(const uint16_t duration,
     return flow.get_flow();
 }
 
-std::vector<flow_expression> FlowTransitions::rgb(const uint16_t duration, const uint8_t brightness, uint16_t speed) {
+std::vector<flow_expression> FlowTransitions::rgb(const uint16_t duration, const uint8_t brightness, const uint16_t speed) {
     Flow flow;
     flow.add_hsv(duration, 0, 100, brightness);
     flow.add_sleep(speed);

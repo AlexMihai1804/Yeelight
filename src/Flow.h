@@ -33,7 +33,7 @@ public:
      * @param value The RGB color value.
      * @param brightness The brightness level of the effect.
      */
-    void add_rgb(uint32_t duration, uint32_t value, int8_t brightness);
+    void add_rgb(uint32_t duration, uint32_t value, uint8_t brightness);
 
     /**
      * @brief Adds an RGB color effect to the flow.
@@ -44,7 +44,7 @@ public:
      * @param b The blue component of the RGB color.
      * @param brightness The brightness level of the effect.
      */
-    void add_rgb(uint32_t duration, uint8_t r, uint8_t g, uint8_t b, int8_t brightness);
+    void add_rgb(uint32_t duration, uint8_t r, uint8_t g, uint8_t b, uint8_t brightness);
 
     /**
      * @brief Adds a color temperature effect to the flow.
@@ -53,7 +53,7 @@ public:
      * @param color_temperature The color temperature value.
      * @param brightness The brightness level of the effect.
      */
-    void add_ct(uint32_t duration, uint32_t color_temperature, int8_t brightness);
+    void add_ct(uint32_t duration, uint32_t color_temperature, uint8_t brightness);
 
     /**
      * @brief Adds a sleep effect to the flow.
@@ -62,7 +62,7 @@ public:
      */
     void add_sleep(uint32_t duration);
 
-    void add_hsv(uint32_t duration, uint16_t hue, uint8_t sat, int8_t brightness);
+    void add_hsv(uint32_t duration, uint16_t hue, uint8_t sat, uint8_t brightness);
 
     /**
      * @brief Adds a custom flow expression to the flow.

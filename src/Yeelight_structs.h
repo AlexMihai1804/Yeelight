@@ -19,7 +19,7 @@ struct flow_expression
     uint32_t duration; /**< Duration of the flow expression in milliseconds */
     flow_mode mode;    /**< Flow mode */
     uint32_t value;    /**< Value specific to the flow mode */
-    int8_t brightness; /**< Brightness level for the flow */
+    uint8_t brightness; /**< Brightness level for the flow */
 };
 /**
  * @brief Struct representing the supported methods of the Yeelight device.
