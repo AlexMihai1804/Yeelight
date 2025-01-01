@@ -1,10 +1,10 @@
 #ifndef YEELIGHTARDUINO_FLOW_H
 #define YEELIGHTARDUINO_FLOW_H
 
+#include <cstdint>
+#include <vector>
 #include "Yeelight_enums.h"
 #include "Yeelight_structs.h"
-#include <vector>
-#include <cstdint>
 
 /**
  * @class Flow
@@ -16,7 +16,8 @@
  */
 class Flow {
 private:
-    std::vector<flow_expression> flow; /**< The vector of flow expressions representing the sequence of light effects. */
+    std::vector<flow_expression> flow;
+    /**< The vector of flow expressions representing the sequence of light effects. */
     uint8_t count = 0; /**< The number of times the flow should be repeated. */
     flow_action action = FLOW_RECOVER; /**< The action to be taken after the flow is completed. */
 public:
@@ -60,6 +61,8 @@ public:
      * @param duration The duration of the sleep in milliseconds.
      */
     void add_sleep(uint32_t duration);
+
+    void add_hsv(uint32_t duration, uint16_t hue, uint8_t sat, int8_t brightness);
 
     /**
      * @brief Adds a custom flow expression to the flow.
@@ -168,6 +171,8 @@ public:
      * @param new_action The new action to be set for the flow.
      */
     void setAction(flow_action new_action);
+
+    std::vector<flow_expression> get_flow() const;
 };
 
 #endif

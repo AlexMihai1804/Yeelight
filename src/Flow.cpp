@@ -1,5 +1,5 @@
 #include "Flow.h"
-
+#include <cmath>
 Flow::Flow() {
     flow = std::vector<flow_expression>();
 }
@@ -9,7 +9,8 @@ void Flow::add_rgb(const uint32_t duration, const uint32_t value, const int8_t b
     flow.push_back(expression);
 }
 
-void Flow::add_rgb(const uint32_t duration, const uint8_t r, const uint8_t g, const uint8_t b, const int8_t brightness) {
+void Flow::add_rgb(const uint32_t duration, const uint8_t r, const uint8_t g, const uint8_t b,
+                   const int8_t brightness) {
     const uint32_t value = (r << 16) + (g << 8) + b;
     add_rgb(duration, value, brightness);
 }
@@ -22,6 +23,74 @@ void Flow::add_ct(const uint32_t duration, const uint32_t color_temperature, con
 void Flow::add_sleep(const uint32_t duration) {
     const flow_expression expression = {duration, FLOW_SLEEP, 0, 0};
     flow.push_back(expression);
+}
+
+void Flow::add_hsv(const uint32_t duration, const uint16_t hue, const uint8_t sat, const int8_t brightness) {
+    float H = fmod(hue, 360.0);
+    if (H < 0.0) {
+        H += 360.0;
+    }
+    const float S = static_cast<float>(sat) / 255.0;
+    uint8_t brightness_clamped;
+    if (brightness < 0) {
+        brightness_clamped = 0;
+    }
+    else if (brightness > 100) {
+        brightness_clamped = 100;
+    }
+    else {
+        brightness_clamped = static_cast<uint8_t>(brightness);
+    }
+    const float V = static_cast<float>(brightness_clamped) / 100.0;
+    const float C = V * S;
+    const float H_prime = H / 60.0;
+    const float X = C * (1.0 - fabs(fmod(H_prime, 2.0) - 1.0));
+    const float m = V - C;
+    float R_prime, G_prime, B_prime;
+    if (0.0 <= H_prime && H_prime < 1.0) {
+        R_prime = C;
+        G_prime = X;
+        B_prime = 0.0;
+    }
+    else if (1.0 <= H_prime && H_prime < 2.0) {
+        R_prime = X;
+        G_prime = C;
+        B_prime = 0.0;
+    }
+    else if (2.0 <= H_prime && H_prime < 3.0) {
+        R_prime = 0.0;
+        G_prime = C;
+        B_prime = X;
+    }
+    else if (3.0 <= H_prime && H_prime < 4.0) {
+        R_prime = 0.0;
+        G_prime = X;
+        B_prime = C;
+    }
+    else if (4.0 <= H_prime && H_prime < 5.0) {
+        R_prime = X;
+        G_prime = 0.0;
+        B_prime = C;
+    }
+    else if (5.0 <= H_prime && H_prime < 6.0) {
+        R_prime = C;
+        G_prime = 0.0;
+        B_prime = X;
+    }
+    else {
+        R_prime = 0.0;
+        G_prime = 0.0;
+        B_prime = 0.0;
+    }
+    const float R = (R_prime + m) * 255.0;
+    const float G = (G_prime + m) * 255.0;
+    const float B = (B_prime + m) * 255.0;
+    const auto r = static_cast<uint8_t>(std::round(R));
+    const auto g = static_cast<uint8_t>(std::round(G));
+    const auto b = static_cast<uint8_t>(std::round(B));
+    const float brightness_calc = 0.299f * r + 0.587f * g + 0.114f * b;
+    const uint8_t bright = static_cast<uint8_t>(std::round((brightness_calc / 255.0) * 100.0));
+    add_rgb(duration, r, g, b, bright);
 }
 
 void Flow::add_expression(const flow_expression &expression) {
@@ -91,4 +160,8 @@ flow_action Flow::getAction() const {
 
 void Flow::setAction(const flow_action new_action) {
     action = new_action;
+}
+
+std::vector<flow_expression> Flow::get_flow() const {
+    return flow;
 }
