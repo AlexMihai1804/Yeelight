@@ -112,11 +112,11 @@ public:
      *
      * @param duration The duration of each flow expression in milliseconds. Default is 250.
      * @param brightness The brightness level of the flow expressions, ranging from 0 to 100. Default is 100.
-     * @param speed The speed at which the flow expressions cycle, in milliseconds. Default is 3000.
+     * @param sleep The speed at which the flow expressions cycle, in milliseconds. Default is 3000.
      * @return A vector containing the generated Christmas-themed flow expressions.
      */
     static std::vector<flow_expression> christmas(uint16_t duration = 250, uint8_t brightness = 100,
-                                                  uint16_t speed = 3000);
+                                                  uint16_t sleep = 3000);
 
     /**
      * Generates a vector of flow_expression objects representing an RGB light sequence.
