@@ -133,7 +133,7 @@ public:
   *              Defaults to 3000 milliseconds if not specified.
   * @return A Flow object configured with the specified RGB settings.
   */
- static Flow rgb(uint32_t duration = 250, uint8_t brightness = 100, uint16_t sleep = 3000);
+ static Flow rgb(uint16_t duration = 250, uint8_t brightness = 100, uint16_t sleep = 3000);
 
  /**
   * Generates a randomized flow pattern in a loop with configurable duration, brightness, and count.

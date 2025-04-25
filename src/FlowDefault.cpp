@@ -82,7 +82,7 @@ Flow FlowDefault::christmas(const uint16_t duration, const uint8_t brightness, c
     return flow;
 }
 
-Flow FlowDefault::rgb(const uint32_t duration, const uint8_t brightness, const uint16_t sleep) {
+Flow FlowDefault::rgb(const uint16_t duration, const uint8_t brightness, const uint16_t sleep) {
     Flow flow;
     flow = flow + FlowTransitions::rgb(duration, brightness, sleep);
     flow.set_count(0);
