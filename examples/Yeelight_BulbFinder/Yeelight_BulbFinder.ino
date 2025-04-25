@@ -1,11 +1,15 @@
+// Example: Bulb Finder Demo
 #include "Yeelight.h"
 #include <WiFi.h>
+
+#define WIFI_SSID "YourWiFiSSID"
+#define WIFI_PASS "YourWiFiPassword"
 
 void setup() {
     Serial.begin(115200);
 
     // Connect to WiFi (replace with your network credentials)
-    WiFi.begin("YourWiFiSSID", "YourWiFiPassword");
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
     while (WiFi.status() != WL_CONNECTED) {
         delay(500);
         Serial.print(".");
