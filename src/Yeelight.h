@@ -19,7 +19,7 @@
 #include <map>
 #include <Yeelight_enums.h>
 #include <Yeelight_structs.h>
-
+#include <freertos/semphr.h>
 /**
  * @class Yeelight
  * @brief The main class for discovering, connecting, and controlling Yeelight devices.
@@ -99,6 +99,16 @@ private:
      * @brief A flag indicating whether the device connection is being closed manually.
      */
     bool closingManually = false;
+    bool refreshedMethods = false;
+    uint8_t music_host[4]{};
+    uint16_t music_port{};
+    uint8_t music_retry_count{};
+    const uint8_t max_music_retries = 5;
+    bool is_switching_to_normal = false;
+    static SemaphoreHandle_t devices_mutex;
+    bool connecting = false;
+    SemaphoreHandle_t music_sem = nullptr;
+
 
     /**
      * @brief The static server instance for handling inbound music mode connections.
@@ -113,7 +123,9 @@ private:
     //---------------------------------------------------------------------------------------------------------
     // PRIVATE METHODS
     //---------------------------------------------------------------------------------------------------------
-
+    static void onMainClientConnect(AsyncClient *c);
+    void onMainClientError (AsyncClient *c, int8_t error);
+    void safeInsertDevice(uint32_t ip32);
     /**
      * @brief Callback triggered when the main client is disconnected.
      * @param c A pointer to the disconnected client.
@@ -125,6 +137,12 @@ private:
      * @param c A pointer to the disconnected client.
      */
     void onMusicDisconnect(const AsyncClient *c);
+
+    void onMusicConnect(AsyncClient *c);
+
+    static void deleteClientCallback(TimerHandle_t xTimer);
+
+    static void scheduleDeleteClient(AsyncClient *c);
 
     /**
      * @brief Callback for handling a new inbound client connection in music mode.
@@ -1126,14 +1144,14 @@ public:
      * @param action The action to perform (increase, decrease).
      * @param prop The property to be adjusted (bright, ct, color).
      */
-    void set_adjust(ajust_action action, ajust_prop prop);
+    void set_adjust(adjust_action action, adjust_prop prop);
 
     /**
      * @brief Sends a BG-specific adjust action, used internally by the library.
      * @param action The action to perform (increase, decrease).
      * @param prop The property to be adjusted (bright, ct, color).
      */
-    void bg_set_adjust(ajust_action action, ajust_prop prop);
+    void bg_set_adjust(adjust_action action, adjust_prop prop);
 
     //
     // 12) TIMEOUT SETTINGS

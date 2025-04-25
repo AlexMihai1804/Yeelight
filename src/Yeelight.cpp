@@ -4,85 +4,89 @@
 #include <WiFiUdp.h>
 std::map<uint32_t, Yeelight *> Yeelight::devices;
 AsyncServer *Yeelight::music_mode_server = nullptr;
+SemaphoreHandle_t Yeelight::devices_mutex = nullptr;
+static SemaphoreHandle_t responses_mutex = nullptr;
 
-ResponseType Yeelight::checkResponse(const uint16_t id) {
-    const auto start_time = millis();
-    while (millis() - start_time < timeout) {
-        if (responses.count(id)) {
-            return responses[id];
-        }
-        delay(10);
-    }
-    return TIMEOUT;
+static inline void lockResponses() {
+    xSemaphoreTake(responses_mutex, portMAX_DELAY);
 }
 
-Yeelight::Yeelight(const uint8_t ip[4], const uint16_t port) : port(port), supported_methods(), timeout(5000),
-                                                               max_retry(3), response_id(1), music_mode(false) {
-    for (int i = 0; i < 4; i++) {
-        this->ip[i] = ip[i];
+static inline void unlockResponses() {
+    xSemaphoreGive(responses_mutex);
+}
+
+Yeelight::Yeelight() : port(0), supported_methods(), timeout(7000), max_retry(5), properties(), response_id(1),
+                       music_mode(false), connecting(false) {
+    memset(ip, 0, sizeof(ip));
+    if (!devices_mutex) {
+        devices_mutex = xSemaphoreCreateMutex();
+        if (!devices_mutex) Serial.println("Failed to create devices mutex");
     }
+    if (!responses_mutex) {
+        responses_mutex = xSemaphoreCreateMutex();
+        if (!responses_mutex) Serial.println("Failed to create responses mutex");
+    }
+    music_sem = xSemaphoreCreateBinary();
+}
+
+Yeelight::Yeelight(const uint8_t ip[4], const uint16_t port) : port(port), supported_methods(), timeout(7000),
+                                                               max_retry(3), response_id(1), music_mode(false),
+                                                               connecting(false) {
+    memcpy(this->ip, ip, 4);
+    if (!devices_mutex) {
+        devices_mutex = xSemaphoreCreateMutex();
+        if (!devices_mutex) Serial.println("Failed to create devices mutex");
+    }
+    if (!responses_mutex) {
+        responses_mutex = xSemaphoreCreateMutex();
+        if (!responses_mutex) Serial.println("Failed to create responses mutex");
+    }
+    music_sem = xSemaphoreCreateBinary();
     const uint32_t ip32 = ip[0] << 24 | ip[1] << 16 | ip[2] << 8 | ip[3];
-    devices[ip32] = this;
-    refreshSupportedMethods();
+    if (xSemaphoreTake(devices_mutex, portMAX_DELAY) == pdTRUE) {
+        devices[ip32] = this;
+        xSemaphoreGive(devices_mutex);
+    }
+    uint8_t current_retries = 0;
+    while (!refreshedMethods && current_retries < max_retry) {
+        refreshSupportedMethods();
+        ++current_retries;
+        vTaskDelay(250 / portTICK_PERIOD_MS);
+    }
     connect();
 }
 
 Yeelight::Yeelight(const YeelightDevice &device) : port(device.port), supported_methods(device.supported_methods),
-                                                   timeout(5000), max_retry(3), response_id(1), music_mode(false) {
-    for (int i = 0; i < 4; i++) {
-        ip[i] = device.ip[i];
+                                                   timeout(7000), max_retry(3), response_id(1), music_mode(false),
+                                                   connecting(false) {
+    memcpy(ip, device.ip, 4);
+    if (!devices_mutex) {
+        devices_mutex = xSemaphoreCreateMutex();
+        if (!devices_mutex) Serial.println("Failed to create devices mutex");
     }
+    if (!responses_mutex) {
+        responses_mutex = xSemaphoreCreateMutex();
+        if (!responses_mutex) Serial.println("Failed to create responses mutex");
+    }
+    music_sem = xSemaphoreCreateBinary();
     const uint32_t ip32 = device.ip[0] << 24 | device.ip[1] << 16 | device.ip[2] << 8 | device.ip[3];
-    devices[ip32] = this;
+    if (xSemaphoreTake(devices_mutex, portMAX_DELAY) == pdTRUE) {
+        devices[ip32] = this;
+        xSemaphoreGive(devices_mutex);
+    }
     connect();
-}
-
-SupportedMethods Yeelight::getSupportedMethods() const {
-    return supported_methods;
-}
-
-void Yeelight::refreshSupportedMethods() {
-    WiFiUDP udp;
-    const IPAddress multicastIP(239, 255, 255, 250);
-    constexpr unsigned int localUdpPort = 1982;
-    const auto ssdpRequest =
-            "M-SEARCH * HTTP/1.1\r\n"
-            "HOST: 239.255.255.250:1982\r\n"
-            "MAN: \"ssdp:discover\"\r\n"
-            "ST: wifi_bulb\r\n\r\n";
-    if (!udp.begin(localUdpPort)) {
-    }
-    udp.beginPacket(multicastIP, localUdpPort);
-    udp.print(ssdpRequest);
-    udp.endPacket();
-    const unsigned long startTime = millis();
-    while (millis() - startTime < timeout) {
-        const int packetSize = udp.parsePacket();
-        if (packetSize) {
-            char packetBuffer[1024];
-            const int len = udp.read(packetBuffer, sizeof(packetBuffer) - 1);
-            if (len > 0) {
-                packetBuffer[len] = '\0';
-                const YeelightDevice device = parseDiscoveryResponse(packetBuffer);
-                if (memcmp(device.ip, ip, sizeof(ip)) == 0) {
-                    supported_methods = device.supported_methods;
-                    udp.stop();
-                    break;
-                }
-            }
-        }
-    }
 }
 
 Yeelight::~Yeelight() {
     if (client) {
         closingManually = true;
         client->close();
-        delete client;
+        scheduleDeleteClient(client);
         client = nullptr;
     }
     if (music_client) {
         music_client->close();
+        scheduleDeleteClient(music_client);
         music_client = nullptr;
     }
     if (music_mode_server) {
@@ -90,88 +94,94 @@ Yeelight::~Yeelight() {
         delete music_mode_server;
         music_mode_server = nullptr;
     }
-    const uint32_t ip32 = static_cast<uint32_t>(ip[0]) << 24 | static_cast<uint32_t>(ip[1]) << 16 | static_cast<
-                              uint32_t>(ip[2]) << 8 | ip[3];
-    const auto it = devices.find(ip32);
-    if (it != devices.end() && it->second == this) {
-        devices.erase(it);
+    const uint32_t ip32 = ip[0] << 24 | ip[1] << 16 | ip[2] << 8 | ip[3];
+    if (xSemaphoreTake(devices_mutex, portMAX_DELAY) == pdTRUE) {
+        auto it = devices.find(ip32);
+        if (it != devices.end() && it->second == this) {
+            devices.erase(it);
+        }
+        xSemaphoreGive(devices_mutex);
+    }
+    if (music_sem) {
+        vSemaphoreDelete(music_sem);
+    }
+}
+
+ResponseType Yeelight::checkResponse(const uint16_t id) {
+    const uint32_t start = millis();
+    while (millis() - start < timeout) {
+        lockResponses();
+        auto it = responses.find(id);
+        if (it != responses.end()) {
+            ResponseType r = it->second;
+            responses.erase(it);
+            unlockResponses();
+            return r;
+        }
+        unlockResponses();
+        if (!is_connected()) {
+            return CONNECTION_LOST;
+        }
+        vTaskDelay(20 / portTICK_PERIOD_MS);
+    }
+    return TIMEOUT;
+}
+
+inline void Yeelight::safeInsertDevice(uint32_t ip32) {
+    if (xSemaphoreTake(devices_mutex, portMAX_DELAY) == pdTRUE) {
+        auto old = devices.find(ip32);
+        if (old != devices.end() && old->second != this) {
+            devices.erase(old);
+        }
+        devices[ip32] = this;
+        xSemaphoreGive(devices_mutex);
     }
 }
 
 ResponseType Yeelight::connect() {
+    if (connecting) {
+        return IN_PROGRESS;
+    }
+    connecting = true;
     if (client) {
         closingManually = true;
         client->close();
+        scheduleDeleteClient(client);
+        client = nullptr;
     }
     client = new AsyncClient();
     if (!client) {
-        closingManually = false;
+        connecting = false;
         return ERROR;
     }
-    /*
-    client->onConnect([](void* arg, AsyncClient* c) {
-        auto* that = static_cast<Yeelight*>(arg);
+    client->onConnect([](void *arg, AsyncClient *c) {
+        auto *that = static_cast<Yeelight *>(arg);
+        that->connecting = false;
         that->onMainClientConnect(c);
     }, this);
-    */
     client->onDisconnect([](void *arg, const AsyncClient *c) {
         auto *that = static_cast<Yeelight *>(arg);
         that->onMainClientDisconnect(c);
     }, this);
-    /*
-    client->onError([](void* arg, AsyncClient* c, int8_t error) {
-        auto* that = static_cast<Yeelight*>(arg);
+    client->onError([](void *arg, AsyncClient *c, int8_t error) {
+        auto *that = static_cast<Yeelight *>(arg);
         that->onMainClientError(c, error);
     }, this);
-    */
-    client->onData([](void *arg, AsyncClient *c, const void *data, const size_t len) {
-        auto *that = static_cast<Yeelight *>(arg);
-        that->onData(c, data, len);
+    client->onData([](void *arg, AsyncClient *c, const void *d, size_t l) {
+        static_cast<Yeelight *>(arg)->onData(c, d, l);
     }, this);
-
-    const IPAddress devIP(ip[0], ip[1], ip[2], ip[3]);
+    IPAddress devIP(ip[0], ip[1], ip[2], ip[3]);
     if (!client->connect(devIP, port)) {
         delete client;
         client = nullptr;
-        closingManually = false;
+        connecting = false;
         return CONNECTION_FAILED;
     }
-    closingManually = false;
     return SUCCESS;
 }
 
 ResponseType Yeelight::send_command(const char *method, cJSON *params) {
-    if (!music_mode) {
-        uint8_t current_retries = 0;
-        while (!is_connected() && current_retries < max_retry) {
-            connect();
-            current_retries++;
-            delay(250);
-        }
-        if (is_connected()) {
-            cJSON *root = cJSON_CreateObject();
-            if (!root) {
-                cJSON_Delete(params);
-                return ERROR;
-            }
-            cJSON_AddNumberToObject(root, "id", response_id++);
-            cJSON_AddStringToObject(root, "method", method);
-            cJSON_AddItemToObject(root, "params", params);
-            char *command = cJSON_PrintUnformatted(root);
-            if (command == nullptr) {
-                cJSON_Delete(root);
-                return ERROR;
-            }
-            client->write(command, strlen(command));
-            client->write("\r\n", 2);
-            cJSON_Delete(root);
-            free(command);
-            return checkResponse(response_id - 1);
-        }
-        cJSON_Delete(params);
-        return CONNECTION_LOST;
-    }
-    if (is_connected_music()) {
+    if (music_mode && is_connected_music()) {
         cJSON *root = cJSON_CreateObject();
         if (!root) {
             cJSON_Delete(params);
@@ -181,7 +191,7 @@ ResponseType Yeelight::send_command(const char *method, cJSON *params) {
         cJSON_AddStringToObject(root, "method", method);
         cJSON_AddItemToObject(root, "params", params);
         char *command = cJSON_PrintUnformatted(root);
-        if (command == nullptr) {
+        if (!command) {
             cJSON_Delete(root);
             return ERROR;
         }
@@ -191,524 +201,198 @@ ResponseType Yeelight::send_command(const char *method, cJSON *params) {
         free(command);
         return SUCCESS;
     }
-    cJSON_Delete(params);
-    return CONNECTION_LOST;
+    if (!is_connected()) {
+        connect();
+    }
+    uint32_t waited = 0;
+    while (!is_connected() && waited < timeout) {
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+        waited += 10;
+    }
+    if (!is_connected()) {
+        cJSON_Delete(params);
+        return CONNECTION_LOST;
+    }
+    cJSON *root = cJSON_CreateObject();
+    if (!root) {
+        cJSON_Delete(params);
+        return ERROR;
+    }
+    cJSON_AddNumberToObject(root, "id", response_id++);
+    cJSON_AddStringToObject(root, "method", method);
+    cJSON_AddItemToObject(root, "params", params);
+    char *command = cJSON_PrintUnformatted(root);
+    if (!command) {
+        cJSON_Delete(root);
+        return ERROR;
+    }
+    client->write(command, strlen(command));
+    client->write("\r\n", 2);
+    cJSON_Delete(root);
+    free(command);
+    return checkResponse(response_id - 1);
 }
 
-ResponseType Yeelight::set_power_command(const bool power, const effect effect, const uint16_t duration,
-                                         const mode mode) {
-    if (!supported_methods.set_power) {
+ResponseType Yeelight::enable_music_mode() {
+    if (!supported_methods.set_music) {
         return METHOD_NOT_SUPPORTED;
     }
-    if (duration < 30) {
-        return INVALID_PARAMS;
+    if (!client || !is_connected()) {
+        connect();
     }
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
+    createMusicModeServer();
+    IPAddress loc = WiFi.localIP();
+    music_host[0] = loc[0];
+    music_host[1] = loc[1];
+    music_host[2] = loc[2];
+    music_host[3] = loc[3];
+    music_port = 55443;
+    if (xSemaphoreTake(music_sem, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        return CONNECTION_FAILED;
     }
-    cJSON_AddItemToArray(params, cJSON_CreateString(power ? "on" : "off"));
-    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
-    if (mode != MODE_CURRENT) {
-        cJSON_AddItemToArray(params, cJSON_CreateNumber(mode));
-    }
-    return send_command("set_power", params);
+    return set_music_command(true, music_host, music_port);
 }
 
-ResponseType Yeelight::toggle_command() {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
+void Yeelight::onMusicConnect(AsyncClient *c) {
+    music_mode = true;
+    music_retry_count = 0;
+    if (client) {
+        client->close();
+        scheduleDeleteClient(client);
+        client = nullptr;
     }
-    return send_command("toggle", params);
+    xSemaphoreGive(music_sem);
+    Serial.println("Music mode connected successfully.");
 }
 
-ResponseType Yeelight::set_ct_abx_command(const uint16_t ct_value, const effect effect, const uint16_t duration) {
-    if (!supported_methods.set_ct_abx) {
-        return METHOD_NOT_SUPPORTED;
-    }
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(ct_value));
-    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
-    return send_command("set_ct_abx", params);
+void Yeelight::onMainClientConnect(AsyncClient *c) {
+    Serial.println("Main socket connected");
 }
 
-ResponseType Yeelight::set_rgb_command(const uint8_t r, const uint8_t g, const uint8_t b, const effect effect,
-                                       const uint16_t duration) {
-    const uint32_t rgb = r << 16 | g << 8 | b;
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(rgb));
-    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
-    return send_command("set_rgb", params);
+void Yeelight::onMainClientError(AsyncClient *c, int8_t error) {
+    Serial.printf("AsyncClient error %d\n", error);
+    connecting = false;
 }
 
-ResponseType Yeelight::set_hsv_command(const uint16_t hue, const uint8_t sat, const effect effect,
-                                       const uint16_t duration) {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
+ResponseType Yeelight::connect(const uint8_t *ip, const uint16_t port) {
+    if (is_connected()) {
+        client->close();
+        scheduleDeleteClient(client);
+        client = nullptr;
     }
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(hue));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(sat));
-    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
-    return send_command("set_hsv", params);
+    for (uint8_t i = 0; i < 4; i++) {
+        this->ip[i] = ip[i];
+    }
+    const uint32_t ip32 = ip[0] << 24 | ip[1] << 16 | ip[2] << 8 | ip[3];
+    if (xSemaphoreTake(Yeelight::devices_mutex, portMAX_DELAY) == pdTRUE) {
+        devices[ip32] = this;
+        xSemaphoreGive(Yeelight::devices_mutex);
+    }
+    this->port = port;
+    uint8_t current_retries = 0;
+    while (!refreshedMethods && current_retries < max_retry) {
+        refreshSupportedMethods();
+        current_retries++;
+        vTaskDelay(250 / portTICK_PERIOD_MS);
+    }
+    return connect();
 }
 
-ResponseType Yeelight::set_bright_command(const uint8_t bright, const effect effect, const uint16_t duration) {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
+ResponseType Yeelight::connect(const YeelightDevice &device) {
+    for (int i = 0; i < 4; ++i) {
+        this->ip[i] = device.ip[i];
     }
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(bright));
-    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
-    return send_command("set_bright", params);
+    const uint32_t ip32 = device.ip[0] << 24 | device.ip[1] << 16 | device.ip[2] << 8 | device.ip[3];
+    if (xSemaphoreTake(Yeelight::devices_mutex, portMAX_DELAY) == pdTRUE) {
+        devices[ip32] = this;
+        xSemaphoreGive(Yeelight::devices_mutex);
+    }
+    this->port = device.port;
+    supported_methods = device.supported_methods;
+    return connect();
 }
 
-ResponseType Yeelight::set_default() {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    return send_command("set_default", params);
+bool Yeelight::is_connected() const {
+    return client && client->connected();
 }
 
-ResponseType Yeelight::start_cf_command(const uint8_t count, const flow_action action, const uint8_t size,
-                                        const flow_expression *flow) {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(count));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(action));
-    std::string flowExpression;
-    for (int i = 0; i < size; i++) {
-        flowExpression += std::to_string(flow[i].duration) + "," + std::to_string(flow[i].mode) + "," +
-                std::to_string(flow[i].value) + "," + std::to_string(flow[i].brightness) + ",";
-    }
-    flowExpression.pop_back();
-    cJSON_AddItemToArray(params, cJSON_CreateString(flowExpression.c_str()));
-    return send_command("start_cf", params);
+bool Yeelight::is_connected_music() const {
+    return music_client && music_client->connected();
 }
 
-ResponseType Yeelight::stop_cf_command() {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
+bool Yeelight::createMusicModeServer() {
+    if (music_mode_server) {
+        return false;
     }
-    return send_command("stop_cf", params);
+    music_mode_server = new AsyncServer(55443);
+    music_mode_server->onClient(handleNewClient, nullptr);
+    music_mode_server->begin();
+    return true;
 }
 
-ResponseType Yeelight::set_scene_rgb_command(const uint8_t r, const uint8_t g, const uint8_t b, const uint8_t bright) {
-    const uint32_t rgb = r << 16 | g << 8 | b;
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateString("color"));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(rgb));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(bright));
-    return send_command("set_scene", params);
-}
-
-ResponseType Yeelight::set_scene_hsv_command(const uint8_t hue, const uint8_t sat, const uint8_t bright) {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateString("hsv"));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(hue));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(sat));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(bright));
-    return send_command("set_scene", params);
-}
-
-ResponseType Yeelight::set_scene_ct_command(const uint16_t ct, const uint8_t bright) {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateString("ct"));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(ct));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(bright));
-    return send_command("set_scene", params);
-}
-
-ResponseType Yeelight::set_scene_auto_delay_off_command(const uint8_t brightness, const uint32_t duration) {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateString("auto_delay_off"));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(brightness));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
-    return send_command("set_scene", params);
-}
-
-ResponseType Yeelight::set_scene_cf_command(const uint32_t count, const flow_action action, const uint32_t size,
-                                            const flow_expression *flow) {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateString("cf"));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(count));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(action));
-    std::string flowExpression;
-    for (int i = 0; i < size; i++) {
-        flowExpression += std::to_string(flow[i].duration) + "," + std::to_string(flow[i].mode) + "," +
-                std::to_string(flow[i].value) + "," + std::to_string(flow[i].brightness) + ",";
-    }
-    flowExpression.pop_back();
-    cJSON_AddItemToArray(params, cJSON_CreateString(flowExpression.c_str()));
-    return send_command("set_scene", params);
-}
-
-ResponseType Yeelight::cron_add_command(const uint32_t time) {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(0));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(time));
-    return send_command("cron_add", params);
-}
-
-ResponseType Yeelight::cron_del_command() {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(0));
-    return send_command("cron_del", params);
-}
-
-void Yeelight::set_adjust(const ajust_action action, const ajust_prop prop) {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return;
-    }
-    if (action == ADJUST_INCREASE) {
-        cJSON_AddItemToArray(params, cJSON_CreateString("increase"));
-    } else if (action == ADJUST_DECREASE) {
-        cJSON_AddItemToArray(params, cJSON_CreateString("decrease"));
-    } else {
-        cJSON_AddItemToArray(params, cJSON_CreateString("circle"));
-    }
-    if (prop == ADJUST_BRIGHT) {
-        cJSON_AddItemToArray(params, cJSON_CreateString("bright"));
-    } else if (prop == ADJUST_CT) {
-        cJSON_AddItemToArray(params, cJSON_CreateString("ct"));
-    } else {
-        cJSON_AddItemToArray(params, cJSON_CreateString("color"));
-    }
-    send_command("set_adjust", params);
-}
-
-ResponseType Yeelight::set_name_command(const char *name) {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateString(name));
-    return send_command("set_name", params);
-}
-
-ResponseType Yeelight::bg_set_power_command(const bool power, const effect effect, const uint16_t duration,
-                                            const mode mode) {
-    if (!supported_methods.bg_set_power) {
-        return METHOD_NOT_SUPPORTED;
-    }
-    if (duration < 30) {
-        return INVALID_PARAMS;
-    }
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateString(power ? "on" : "off"));
-    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
-    if (mode != MODE_CURRENT) {
-        cJSON_AddItemToArray(params, cJSON_CreateNumber(mode));
-    }
-    return send_command("bg_set_power", params);
-}
-
-ResponseType Yeelight::bg_toggle_command() {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    return send_command("bg_toggle", params);
-}
-
-ResponseType Yeelight::bg_set_ct_abx_command(const uint16_t ct_value, const effect effect, const uint16_t duration) {
-    if (!supported_methods.bg_set_ct_abx) {
-        return METHOD_NOT_SUPPORTED;
-    }
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(ct_value));
-    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
-    return send_command("bg_set_ct_abx", params);
-}
-
-ResponseType Yeelight::bg_set_rgb_command(const uint8_t r, const uint8_t g, const uint8_t b, const effect effect,
-                                          const uint16_t duration) {
-    const uint32_t rgb = r << 16 | g << 8 | b;
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(rgb));
-    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
-    return send_command("bg_set_rgb", params);
-}
-
-ResponseType Yeelight::bg_set_hsv_command(const uint16_t hue, const uint8_t sat, const effect effect,
-                                          const uint16_t duration) {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(hue));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(sat));
-    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
-    return send_command("bg_set_hsv", params);
-}
-
-ResponseType Yeelight::bg_set_bright_command(const uint8_t bright, const effect effect, const uint16_t duration) {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(bright));
-    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
-    return send_command("bg_set_bright", params);
-}
-
-ResponseType Yeelight::bg_set_default() {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    return send_command("bg_set_default", params);
-}
-
-ResponseType
-Yeelight::bg_set_scene_rgb_command(const uint8_t r, const uint8_t g, const uint8_t b, const uint8_t bright) {
-    const uint32_t rgb = r << 16 | g << 8 | b;
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateString("color"));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(rgb));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(bright));
-    return send_command("bg_set_scene", params);
-}
-
-ResponseType Yeelight::bg_set_scene_hsv_command(const uint8_t hue, const uint8_t sat, const uint8_t bright) {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateString("hsv"));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(hue));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(sat));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(bright));
-    return send_command("bg_set_scene", params);
-}
-
-ResponseType Yeelight::bg_set_scene_ct_command(const uint16_t ct, const uint8_t bright) {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateString("ct"));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(ct));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(bright));
-    return send_command("bg_set_scene", params);
-}
-
-ResponseType Yeelight::bg_set_scene_auto_delay_off_command(const uint8_t brightness, const uint32_t duration) {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateString("auto_delay_off"));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(brightness));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
-    return send_command("bg_set_scene", params);
-}
-
-ResponseType Yeelight::bg_set_scene_cf_command(const uint32_t count, const flow_action action, const uint32_t size,
-                                               const flow_expression *flow) {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateString("cf"));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(count));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(action));
-    std::string flowExpression;
-    for (int i = 0; i < size; i++) {
-        flowExpression += std::to_string(flow[i].duration) + "," + std::to_string(flow[i].mode) + "," +
-                std::to_string(flow[i].value) + "," + std::to_string(flow[i].brightness) + ",";
-    }
-    flowExpression.pop_back();
-    cJSON_AddItemToArray(params, cJSON_CreateString(flowExpression.c_str()));
-    return send_command("bg_set_scene", params);
-}
-
-void Yeelight::bg_set_adjust(const ajust_action action, const ajust_prop prop) {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return;
-    }
-    if (action == ADJUST_INCREASE) {
-        cJSON_AddItemToArray(params, cJSON_CreateString("increase"));
-    } else if (action == ADJUST_DECREASE) {
-        cJSON_AddItemToArray(params, cJSON_CreateString("decrease"));
-    } else {
-        cJSON_AddItemToArray(params, cJSON_CreateString("circle"));
-    }
-    if (prop == ADJUST_BRIGHT) {
-        cJSON_AddItemToArray(params, cJSON_CreateString("bright"));
-    } else if (prop == ADJUST_CT) {
-        cJSON_AddItemToArray(params, cJSON_CreateString("ct"));
-    } else {
-        cJSON_AddItemToArray(params, cJSON_CreateString("color"));
-    }
-    send_command("bg_set_adjust", params);
-}
-
-ResponseType Yeelight::dev_toggle_command() {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    return send_command("dev_toggle", params);
-}
-
-ResponseType Yeelight::adjust_bright_command(const int8_t percentage, const uint16_t duration) {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(percentage));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
-    return send_command("adjust_bright", params);
-}
-
-ResponseType Yeelight::adjust_ct_command(const int8_t percentage, const uint16_t duration) {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(percentage));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
-    return send_command("adjust_ct", params);
-}
-
-ResponseType Yeelight::adjust_color_command(const int8_t percentage, const uint16_t duration) {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(percentage));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
-    return send_command("adjust_color", params);
-}
-
-ResponseType Yeelight::bg_adjust_bright_command(const int8_t percentage, const uint16_t duration) {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(percentage));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
-    return send_command("bg_adjust_bright", params);
-}
-
-ResponseType Yeelight::bg_adjust_ct_command(const int8_t percentage, const uint16_t duration) {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(percentage));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
-    return send_command("bg_adjust_ct", params);
-}
-
-ResponseType Yeelight::bg_adjust_color_command(const int8_t percentage, const uint16_t duration) {
-    cJSON *params = cJSON_CreateArray();
-    if (params == nullptr) {
-        return ERROR;
-    }
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(percentage));
-    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
-    return send_command("bg_adjust_color", params);
-}
-
-std::vector<YeelightDevice> Yeelight::discoverYeelightDevices(int waitTimeMs) {
-    WiFiUDP udp;
-    IPAddress multicastIP(239, 255, 255, 250);
-    unsigned int localUdpPort = 1982;
-    auto ssdpRequest =
-            "M-SEARCH * HTTP/1.1\r\n"
-            "HOST: 239.255.255.250:1982\r\n"
-            "MAN: \"ssdp:discover\"\r\n"
-            "ST: wifi_bulb\r\n\r\n";
-
-    if (!udp.begin(localUdpPort)) {
-        return {};
-    }
-    std::vector<YeelightDevice> devices;
-    udp.beginPacket(multicastIP, localUdpPort);
-    udp.print(ssdpRequest);
-    udp.endPacket();
-    unsigned long startTime = millis();
-    while (millis() - startTime < static_cast<unsigned long>(waitTimeMs)) {
-        int packetSize = udp.parsePacket();
-        if (packetSize) {
-            char packetBuffer[1024];
-            int len = udp.read(packetBuffer, sizeof(packetBuffer) - 1);
-            if (len > 0) {
-                packetBuffer[len] = '\0';
-                YeelightDevice device = parseDiscoveryResponse(packetBuffer);
-                bool found = false;
-                for (YeelightDevice &d: devices) {
-                    if (memcmp(d.ip, device.ip, sizeof(device.ip)) == 0) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    devices.push_back(device);
-                }
-            }
+void Yeelight::handleNewClient(void *arg, AsyncClient *client) {
+    if (!client) return;
+    IPAddress remoteIP = client->remoteIP();
+    const uint32_t remoteIP32 = remoteIP[0] << 24 | remoteIP[1] << 16 | remoteIP[2] << 8 | remoteIP[3];
+    Yeelight *y = nullptr;
+    if (xSemaphoreTake(Yeelight::devices_mutex, portMAX_DELAY) == pdTRUE) {
+        auto it = devices.find(remoteIP32);
+        if (it != devices.end()) {
+            y = it->second;
+            Serial.printf("Client from IP %u.%u.%u.%u associated with Yeelight instance %p\n",
+                          remoteIP[0], remoteIP[1], remoteIP[2], remoteIP[3], y);
+        } else {
+            Serial.printf("No Yeelight instance found for IP %u.%u.%u.%u\n",
+                          remoteIP[0], remoteIP[1], remoteIP[2], remoteIP[3]);
         }
+        xSemaphoreGive(Yeelight::devices_mutex);
     }
-    udp.stop();
-    return devices;
+    if (!y) {
+        Serial.println("Unassociated client. Closing connection.");
+        client->close();
+        return;
+    }
+    client->onConnect([](void *arg2, AsyncClient *c) {
+        auto *that = static_cast<Yeelight *>(arg2);
+        that->onMusicConnect(c);
+    }, y);
+    client->onDisconnect([](void *arg2, const AsyncClient *c) {
+        auto *that = static_cast<Yeelight *>(arg2);
+        that->onMusicDisconnect(c);
+    }, y);
+    client->onData([](void *arg2, AsyncClient *c, const void *data, size_t len) {
+        auto *that = static_cast<Yeelight *>(arg2);
+        that->onData(c, data, len);
+    }, y);
+    if (y->music_client && y->music_client->connected()) {
+        Serial.println("Existing music_client detected. Closing it before assigning a new one.");
+        y->music_client->close();
+    }
+    y->music_client = client;
+    y->music_mode = true;
+    y->client->close();
+}
+
+void Yeelight::deleteClientCallback(const TimerHandle_t xTimer) {
+    const auto *c = static_cast<AsyncClient *>(pvTimerGetTimerID(xTimer));
+    delete c;
+    xTimerDelete(xTimer, 0);
+}
+
+void Yeelight::scheduleDeleteClient(AsyncClient *c) {
+    if (!c) return;
+    const TimerHandle_t delTimer = xTimerCreate(
+        "delAsyncClient",
+        pdMS_TO_TICKS(10),
+        pdFALSE,
+        c,
+        deleteClientCallback
+    );
+    if (delTimer != nullptr) {
+        xTimerStart(delTimer, 0);
+    } else {
+        delete c;
+    }
 }
 
 void Yeelight::onData(AsyncClient *c, const void *data, const size_t len) {
@@ -972,7 +656,7 @@ void Yeelight::onData(AsyncClient *c, const void *data, const size_t len) {
                         } {
                             const cJSON *item = cJSON_GetObjectItem(params, "flow_params");
                             if (item && cJSON_IsString(item)) {
-                                //properties.flow_params = item->valuestring; // (std::string)
+                                //properties.flow_params = item->valuestring;
                             }
                         } {
                             const cJSON *item = cJSON_GetObjectItem(params, "music_on");
@@ -982,7 +666,7 @@ void Yeelight::onData(AsyncClient *c, const void *data, const size_t len) {
                         } {
                             const cJSON *item = cJSON_GetObjectItem(params, "name");
                             if (item && cJSON_IsString(item)) {
-                                properties.name = item->valuestring; // (std::string)
+                                properties.name = item->valuestring;
                             }
                         } {
                             const cJSON *item = cJSON_GetObjectItem(params, "bg_power");
@@ -1059,6 +743,577 @@ void Yeelight::onData(AsyncClient *c, const void *data, const size_t len) {
     }
 }
 
+void Yeelight::onMainClientDisconnect(const AsyncClient *c) {
+    if (client == c) {
+        client = nullptr;
+        scheduleDeleteClient(const_cast<AsyncClient *>(c));
+    }
+}
+
+void Yeelight::onMusicDisconnect(const AsyncClient *c) {
+    if (music_client == c) {
+        music_client = nullptr;
+        scheduleDeleteClient(const_cast<AsyncClient *>(c));
+    }
+    music_mode = false;
+    Serial.println("Music mode disconnected.");
+}
+
+SupportedMethods Yeelight::getSupportedMethods() const {
+    return supported_methods;
+}
+
+void Yeelight::refreshSupportedMethods() {
+    WiFiUDP udp;
+    const IPAddress multicastIP(239, 255, 255, 250);
+    constexpr unsigned int localUdpPort = 1982;
+    const auto ssdpRequest =
+            "M-SEARCH * HTTP/1.1\r\n"
+            "HOST: 239.255.255.250:1982\r\n"
+            "MAN: \"ssdp:discover\"\r\n"
+            "ST: wifi_bulb\r\n\r\n";
+    if (!udp.begin(localUdpPort)) {
+    }
+    udp.beginPacket(multicastIP, localUdpPort);
+    udp.print(ssdpRequest);
+    udp.endPacket();
+    const unsigned long startTime = millis();
+    while (millis() - startTime < timeout) {
+        const int packetSize = udp.parsePacket();
+        if (packetSize) {
+            char packetBuffer[1024];
+            const int len = udp.read(packetBuffer, sizeof(packetBuffer) - 1);
+            if (len > 0) {
+                packetBuffer[len] = '\0';
+                const YeelightDevice device = parseDiscoveryResponse(packetBuffer);
+                if (memcmp(device.ip, ip, sizeof(ip)) == 0) {
+                    Serial.println(device.supported_methods.set_music);
+                    supported_methods = device.supported_methods;
+                    refreshedMethods = true;
+                    udp.stop();
+                    break;
+                }
+            }
+        }
+    }
+}
+
+ResponseType Yeelight::set_power_command(const bool power, const effect effect, const uint16_t duration,
+                                         const mode mode) {
+    if (!supported_methods.set_power) {
+        return METHOD_NOT_SUPPORTED;
+    }
+    if (duration < 30) {
+        return INVALID_PARAMS;
+    }
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateString(power ? "on" : "off"));
+    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
+    if (mode != MODE_CURRENT) {
+        cJSON_AddItemToArray(params, cJSON_CreateNumber(mode));
+    }
+    return send_command("set_power", params);
+}
+
+ResponseType Yeelight::toggle_command() {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    return send_command("toggle", params);
+}
+
+ResponseType Yeelight::set_ct_abx_command(const uint16_t ct_value, const effect effect, const uint16_t duration) {
+    if (!supported_methods.set_ct_abx) {
+        return METHOD_NOT_SUPPORTED;
+    }
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(ct_value));
+    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
+    return send_command("set_ct_abx", params);
+}
+
+ResponseType Yeelight::set_rgb_command(const uint8_t r, const uint8_t g, const uint8_t b, const effect effect,
+                                       const uint16_t duration) {
+    const uint32_t rgb = r << 16 | g << 8 | b;
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(rgb));
+    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
+    return send_command("set_rgb", params);
+}
+
+ResponseType Yeelight::set_hsv_command(const uint16_t hue, const uint8_t sat, const effect effect,
+                                       const uint16_t duration) {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(hue));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(sat));
+    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
+    return send_command("set_hsv", params);
+}
+
+ResponseType Yeelight::set_bright_command(const uint8_t bright, const effect effect, const uint16_t duration) {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(bright));
+    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
+    return send_command("set_bright", params);
+}
+
+ResponseType Yeelight::set_default() {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    return send_command("set_default", params);
+}
+
+ResponseType Yeelight::start_cf_command(const uint8_t count, const flow_action action, const uint8_t size,
+                                        const flow_expression *flow) {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(count));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(action));
+    std::string flowExpression;
+    for (int i = 0; i < size; i++) {
+        flowExpression += std::to_string(flow[i].duration) + "," + std::to_string(flow[i].mode) + "," +
+                std::to_string(flow[i].value) + "," + std::to_string(flow[i].brightness) + ",";
+    }
+    flowExpression.pop_back();
+    cJSON_AddItemToArray(params, cJSON_CreateString(flowExpression.c_str()));
+    return send_command("start_cf", params);
+}
+
+ResponseType Yeelight::stop_cf_command() {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    return send_command("stop_cf", params);
+}
+
+ResponseType Yeelight::set_scene_rgb_command(const uint8_t r, const uint8_t g, const uint8_t b, const uint8_t bright) {
+    const uint32_t rgb = r << 16 | g << 8 | b;
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateString("color"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(rgb));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(bright));
+    return send_command("set_scene", params);
+}
+
+ResponseType Yeelight::set_scene_hsv_command(const uint8_t hue, const uint8_t sat, const uint8_t bright) {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateString("hsv"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(hue));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(sat));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(bright));
+    return send_command("set_scene", params);
+}
+
+ResponseType Yeelight::set_scene_ct_command(const uint16_t ct, const uint8_t bright) {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateString("ct"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(ct));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(bright));
+    return send_command("set_scene", params);
+}
+
+ResponseType Yeelight::set_scene_auto_delay_off_command(const uint8_t brightness, const uint32_t duration) {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateString("auto_delay_off"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(brightness));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
+    return send_command("set_scene", params);
+}
+
+ResponseType Yeelight::set_scene_cf_command(const uint32_t count, const flow_action action, const uint32_t size,
+                                            const flow_expression *flow) {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateString("cf"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(count));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(action));
+    std::string flowExpression;
+    for (int i = 0; i < size; i++) {
+        flowExpression += std::to_string(flow[i].duration) + "," + std::to_string(flow[i].mode) + "," +
+                std::to_string(flow[i].value) + "," + std::to_string(flow[i].brightness) + ",";
+    }
+    flowExpression.pop_back();
+    cJSON_AddItemToArray(params, cJSON_CreateString(flowExpression.c_str()));
+    return send_command("set_scene", params);
+}
+
+ResponseType Yeelight::cron_add_command(const uint32_t time) {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(0));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(time));
+    return send_command("cron_add", params);
+}
+
+ResponseType Yeelight::cron_del_command() {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(0));
+    return send_command("cron_del", params);
+}
+
+void Yeelight::set_adjust(const adjust_action action, const adjust_prop prop) {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return;
+    }
+    if (action == ADJUST_INCREASE) {
+        cJSON_AddItemToArray(params, cJSON_CreateString("increase"));
+    } else if (action == ADJUST_DECREASE) {
+        cJSON_AddItemToArray(params, cJSON_CreateString("decrease"));
+    } else {
+        cJSON_AddItemToArray(params, cJSON_CreateString("circle"));
+    }
+    if (prop == ADJUST_BRIGHT) {
+        cJSON_AddItemToArray(params, cJSON_CreateString("bright"));
+    } else if (prop == ADJUST_CT) {
+        cJSON_AddItemToArray(params, cJSON_CreateString("ct"));
+    } else {
+        cJSON_AddItemToArray(params, cJSON_CreateString("color"));
+    }
+    send_command("set_adjust", params);
+}
+
+ResponseType Yeelight::set_name_command(const char *name) {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateString(name));
+    return send_command("set_name", params);
+}
+
+ResponseType Yeelight::bg_set_power_command(const bool power, const effect effect, const uint16_t duration,
+                                            const mode mode) {
+    if (!supported_methods.bg_set_power) {
+        return METHOD_NOT_SUPPORTED;
+    }
+    if (duration < 30) {
+        return INVALID_PARAMS;
+    }
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateString(power ? "on" : "off"));
+    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
+    if (mode != MODE_CURRENT) {
+        cJSON_AddItemToArray(params, cJSON_CreateNumber(mode));
+    }
+    return send_command("bg_set_power", params);
+}
+
+ResponseType Yeelight::bg_toggle_command() {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    return send_command("bg_toggle", params);
+}
+
+ResponseType Yeelight::bg_set_ct_abx_command(const uint16_t ct_value, const effect effect, const uint16_t duration) {
+    if (!supported_methods.bg_set_ct_abx) {
+        return METHOD_NOT_SUPPORTED;
+    }
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(ct_value));
+    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
+    return send_command("bg_set_ct_abx", params);
+}
+
+ResponseType Yeelight::bg_set_rgb_command(const uint8_t r, const uint8_t g, const uint8_t b, const effect effect,
+                                          const uint16_t duration) {
+    const uint32_t rgb = r << 16 | g << 8 | b;
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(rgb));
+    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
+    return send_command("bg_set_rgb", params);
+}
+
+ResponseType Yeelight::bg_set_hsv_command(const uint16_t hue, const uint8_t sat, const effect effect,
+                                          const uint16_t duration) {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(hue));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(sat));
+    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
+    return send_command("bg_set_hsv", params);
+}
+
+ResponseType Yeelight::bg_set_bright_command(const uint8_t bright, const effect effect, const uint16_t duration) {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(bright));
+    cJSON_AddItemToArray(params, cJSON_CreateString(effect == EFFECT_SMOOTH ? "smooth" : "sudden"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
+    return send_command("bg_set_bright", params);
+}
+
+ResponseType Yeelight::bg_set_default() {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    return send_command("bg_set_default", params);
+}
+
+ResponseType
+Yeelight::bg_set_scene_rgb_command(const uint8_t r, const uint8_t g, const uint8_t b, const uint8_t bright) {
+    const uint32_t rgb = r << 16 | g << 8 | b;
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateString("color"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(rgb));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(bright));
+    return send_command("bg_set_scene", params);
+}
+
+ResponseType Yeelight::bg_set_scene_hsv_command(const uint8_t hue, const uint8_t sat, const uint8_t bright) {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateString("hsv"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(hue));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(sat));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(bright));
+    return send_command("bg_set_scene", params);
+}
+
+ResponseType Yeelight::bg_set_scene_ct_command(const uint16_t ct, const uint8_t bright) {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateString("ct"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(ct));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(bright));
+    return send_command("bg_set_scene", params);
+}
+
+ResponseType Yeelight::bg_set_scene_auto_delay_off_command(const uint8_t brightness, const uint32_t duration) {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateString("auto_delay_off"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(brightness));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
+    return send_command("bg_set_scene", params);
+}
+
+ResponseType Yeelight::bg_set_scene_cf_command(const uint32_t count, const flow_action action, const uint32_t size,
+                                               const flow_expression *flow) {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateString("cf"));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(count));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(action));
+    std::string flowExpression;
+    for (int i = 0; i < size; i++) {
+        flowExpression += std::to_string(flow[i].duration) + "," + std::to_string(flow[i].mode) + "," +
+                std::to_string(flow[i].value) + "," + std::to_string(flow[i].brightness) + ",";
+    }
+    flowExpression.pop_back();
+    cJSON_AddItemToArray(params, cJSON_CreateString(flowExpression.c_str()));
+    return send_command("bg_set_scene", params);
+}
+
+void Yeelight::bg_set_adjust(const adjust_action action, const adjust_prop prop) {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return;
+    }
+    if (action == ADJUST_INCREASE) {
+        cJSON_AddItemToArray(params, cJSON_CreateString("increase"));
+    } else if (action == ADJUST_DECREASE) {
+        cJSON_AddItemToArray(params, cJSON_CreateString("decrease"));
+    } else {
+        cJSON_AddItemToArray(params, cJSON_CreateString("circle"));
+    }
+    if (prop == ADJUST_BRIGHT) {
+        cJSON_AddItemToArray(params, cJSON_CreateString("bright"));
+    } else if (prop == ADJUST_CT) {
+        cJSON_AddItemToArray(params, cJSON_CreateString("ct"));
+    } else {
+        cJSON_AddItemToArray(params, cJSON_CreateString("color"));
+    }
+    send_command("bg_set_adjust", params);
+}
+
+ResponseType Yeelight::dev_toggle_command() {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    return send_command("dev_toggle", params);
+}
+
+ResponseType Yeelight::adjust_bright_command(const int8_t percentage, const uint16_t duration) {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(percentage));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
+    return send_command("adjust_bright", params);
+}
+
+ResponseType Yeelight::adjust_ct_command(const int8_t percentage, const uint16_t duration) {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(percentage));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
+    return send_command("adjust_ct", params);
+}
+
+ResponseType Yeelight::adjust_color_command(const int8_t percentage, const uint16_t duration) {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(percentage));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
+    return send_command("adjust_color", params);
+}
+
+ResponseType Yeelight::bg_adjust_bright_command(const int8_t percentage, const uint16_t duration) {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(percentage));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
+    return send_command("bg_adjust_bright", params);
+}
+
+ResponseType Yeelight::bg_adjust_ct_command(const int8_t percentage, const uint16_t duration) {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(percentage));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
+    return send_command("bg_adjust_ct", params);
+}
+
+ResponseType Yeelight::bg_adjust_color_command(const int8_t percentage, const uint16_t duration) {
+    cJSON *params = cJSON_CreateArray();
+    if (params == nullptr) {
+        return ERROR;
+    }
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(percentage));
+    cJSON_AddItemToArray(params, cJSON_CreateNumber(duration));
+    return send_command("bg_adjust_color", params);
+}
+
+std::vector<YeelightDevice> Yeelight::discoverYeelightDevices(int waitTimeMs) {
+    WiFiUDP udp;
+    IPAddress multicastIP(239, 255, 255, 250);
+    unsigned int localUdpPort = 1982;
+    auto ssdpRequest =
+            "M-SEARCH * HTTP/1.1\r\n"
+            "HOST: 239.255.255.250:1982\r\n"
+            "MAN: \"ssdp:discover\"\r\n"
+            "ST: wifi_bulb\r\n\r\n";
+
+    if (!udp.begin(localUdpPort)) {
+        return {};
+    }
+    std::vector<YeelightDevice> devices;
+    udp.beginPacket(multicastIP, localUdpPort);
+    udp.print(ssdpRequest);
+    udp.endPacket();
+    unsigned long startTime = millis();
+    while (millis() - startTime < static_cast<unsigned long>(waitTimeMs)) {
+        int packetSize = udp.parsePacket();
+        if (packetSize) {
+            char packetBuffer[1024];
+            int len = udp.read(packetBuffer, sizeof(packetBuffer) - 1);
+            if (len > 0) {
+                packetBuffer[len] = '\0';
+                YeelightDevice device = parseDiscoveryResponse(packetBuffer);
+                bool found = false;
+                for (YeelightDevice &d: devices) {
+                    if (memcmp(d.ip, device.ip, sizeof(device.ip)) == 0) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    devices.push_back(device);
+                }
+            }
+        }
+    }
+    udp.stop();
+    return devices;
+}
+
 YeelightDevice Yeelight::parseDiscoveryResponse(const char *response) {
     YeelightDevice device;
     memset(&device, 0, sizeof(device));
@@ -1122,8 +1377,8 @@ YeelightDevice Yeelight::parseDiscoveryResponse(const char *response) {
     const char *support = strstr(response, "\r\nsupport: ");
     if (support) {
         support += strlen("\r\nsupport: ");
-        char supportStr[256];
-        sscanf(support, "%255[^\r\n]", supportStr);
+        char supportStr[512];
+        sscanf(support, "%511[^\r\n]", supportStr);
         std::string supportList = supportStr;
         if (supportList.find("get_prop") != std::string::npos) {
             device.supported_methods.get_prop = true;
@@ -1232,16 +1487,6 @@ YeelightDevice Yeelight::parseDiscoveryResponse(const char *response) {
         }
     }
     return device;
-}
-
-bool Yeelight::createMusicModeServer() {
-    if (music_mode_server) {
-        return false;
-    }
-    music_mode_server = new AsyncServer(55443);
-    music_mode_server->onClient(handleNewClient, nullptr);
-    music_mode_server->begin();
-    return true;
 }
 
 ResponseType Yeelight::set_music_command(const bool power, const uint8_t *host, const uint16_t port) {
@@ -2002,18 +2247,21 @@ ResponseType Yeelight::set_music_mode(const bool enabled) {
         return METHOD_NOT_SUPPORTED;
     }
     if (enabled) {
-        if (client && client->connected()) {
-            closingManually = true;
-            client->close();
+        if (!client || !is_connected()) {
+            connect();
         }
         createMusicModeServer();
         IPAddress loc = WiFi.localIP();
-        const uint8_t ip4[4] = {loc[0], loc[1], loc[2], loc[3]};
-        const auto resp = set_music_command(true, ip4, 55443);
+        music_host[0] = loc[0];
+        music_host[1] = loc[1];
+        music_host[2] = loc[2];
+        music_host[3] = loc[3];
+        music_port = 55443;
+        music_retry_count = 0;
+        const auto resp = set_music_command(true, music_host, music_port);
         if (resp != SUCCESS) {
             return resp;
         }
-        music_mode = true;
         return SUCCESS;
     }
     const auto resp = set_music_command(false);
@@ -2022,14 +2270,11 @@ ResponseType Yeelight::set_music_mode(const bool enabled) {
     }
     if (music_client) {
         music_client->close();
+        delete music_client;
+        music_client = nullptr;
     }
-    music_mode = false;
     connect();
     return SUCCESS;
-}
-
-ResponseType Yeelight::enable_music_mode() {
-    return set_music_mode(true);
 }
 
 ResponseType Yeelight::disable_music_mode() {
@@ -2264,106 +2509,6 @@ ResponseType Yeelight::refreshProperties() {
 
 YeelightProperties Yeelight::getProperties() {
     return properties;
-}
-
-ResponseType Yeelight::connect(const uint8_t *ip, const uint16_t port) {
-    if (is_connected()) {
-        client->close();
-        delete client;
-        client = nullptr;
-    }
-    for (uint8_t i = 0; i < 4; i++) {
-        this->ip[i] = ip[i];
-    }
-    const uint32_t ip32 = ip[0] << 24 | ip[1] << 16 | ip[2] << 8 | ip[3];
-    devices[ip32] = this;
-    this->port = port;
-    refreshSupportedMethods();
-    return connect();
-}
-
-void Yeelight::onMainClientDisconnect(const AsyncClient *c) {
-    if (client == c) {
-        delete client;
-        client = nullptr;
-    }
-    if (!closingManually && !music_mode) {
-        connect();
-    }
-    closingManually = false;
-}
-
-void Yeelight::onMusicDisconnect(const AsyncClient *c) {
-    if (music_client == c) {
-        music_client = nullptr;
-    }
-    music_mode = false;
-    connect();
-}
-
-void Yeelight::handleNewClient(void *arg, AsyncClient *client) {
-    if (!client) return;
-    IPAddress remoteIP = client->remoteIP();
-    const uint8_t r0 = remoteIP[0];
-    const uint8_t r1 = remoteIP[1];
-    const uint8_t r3 = remoteIP[3];
-    const uint8_t r2 = remoteIP[2];
-    const uint32_t remoteIP32 = static_cast<uint32_t>(r0) << 24 | static_cast<uint32_t>(r1) << 16 | static_cast<
-                                    uint32_t>(r2) << 8 | static_cast<uint32_t>(r3);
-    auto &ip2yee = devices;
-    const auto it = ip2yee.find(remoteIP32);
-    if (it == ip2yee.end()) {
-        client->close();
-        return;
-    }
-    Yeelight *y = it->second;
-    /*
-    client->onConnect([](void* arg2, AsyncClient* c) {
-        auto* that = static_cast<Yeelight*>(arg2);
-        that->onMusicConnect(c);
-    }, y);
-    */
-    client->onDisconnect([](void *arg2, const AsyncClient *c) {
-        auto *that = static_cast<Yeelight *>(arg2);
-        that->onMusicDisconnect(c);
-    }, y);
-    /*
-    client->onError([](void* arg2, AsyncClient* c, int8_t error) {
-        auto* that = static_cast<Yeelight*>(arg2);
-        that->onMusicError(c, error);
-    }, y);
-    */
-    client->onData([](void *arg2, AsyncClient *c, const void *data, const size_t len) {
-        auto *that = static_cast<Yeelight *>(arg2);
-        that->onData(c, data, len);
-    }, y);
-    y->music_client = client;
-}
-
-ResponseType Yeelight::connect(const YeelightDevice &device) {
-    for (int i = 0; i < 4; ++i) {
-        this->ip[i] = device.ip[i];
-    }
-    const uint32_t ip32 = device.ip[0] << 24 | device.ip[1] << 16 | device.ip[2] << 8 | device.ip[3];
-    devices[ip32] = this;
-    this->port = device.port;
-    supported_methods = device.supported_methods;
-    return connect();
-}
-
-Yeelight::Yeelight(): port(0), supported_methods(), timeout(5000), max_retry(5), properties(), response_id(1),
-                      music_mode(false) {
-    for (uint8_t &i: ip) {
-        i = 0;
-    }
-}
-
-bool Yeelight::is_connected() const {
-    return client && client->connected();
-}
-
-bool Yeelight::is_connected_music() const {
-    return music_client && music_client->connected();
 }
 
 void Yeelight::set_timeout(const uint16_t timeout) {
