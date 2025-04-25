@@ -38,23 +38,17 @@ enum flow_action
     FLOW_STAY = 1,    /**< Stay flow action */
     FLOW_OFF = 2      /**< Turn off flow action */
 };
-/**
- * @brief Enumeration of adjust actions for adjusting properties of the Yeelight device.
- */
-enum ajust_action
+enum adjust_action   // înainte: ajust_action
 {
-    ADJUST_INCREASE, /**< Increase adjust action */
-    ADJUST_DECREASE, /**< Decrease adjust action */
-    ADJUST_CIRCLE    /**< Circle adjust action */
+    ADJUST_INCREASE,
+    ADJUST_DECREASE,
+    ADJUST_CIRCLE
 };
-/**
- * @brief Enumeration of adjust properties for adjusting properties of the Yeelight device.
- */
-enum ajust_prop
+enum adjust_prop     // înainte: ajust_prop
 {
-    ADJUST_BRIGHT, /**< Brightness adjust property */
-    ADJUST_CT,     /**< Color temperature adjust property */
-    ADJUST_COLOR   /**< Color adjust property */
+    ADJUST_BRIGHT,
+    ADJUST_CT,
+    ADJUST_COLOR
 };
 /**
  * @brief Enumeration of response types for Yeelight commands.
@@ -69,7 +63,8 @@ enum ResponseType
     UNEXPECTED_RESPONSE,  /**< Unexpected response */
     TIMEOUT,              /**< Timeout response */
     CONNECTION_FAILED,    /**< Connection failed response */
-    CONNECTION_LOST       /**< Connection lost response */
+    CONNECTION_LOST,      /**< Connection lost response */
+    IN_PROGRESS           /**< Operation in progress response */
 };
 /**
  * @brief Enumeration of light types for controlling Yeelight devices.
