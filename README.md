@@ -1,122 +1,192 @@
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![PlatformIO Registry](https://img.shields.io/badge/PlatformIO-YeelightArduino-blue)](https://platformio.org/lib/show/YeelightArduino)
+[![Arduino Library](https://img.shields.io/badge/Arduino%20Library-Yeelight-blue)](https://www.arduino.cc/reference/en/libraries/yeelight)
+
 # Arduino Yeelight Library
 
-This Arduino library provides a simple and efficient way to control Yeelight smart bulbs using Wi-Fi. It's designed to be compatible with a wide range of Arduino boards and *all* Yeelight products that support LAN control.
+A fully asynchronous Arduino/PlatformIO library for discovering and controlling Yeelight smart bulbs over LAN.
 
-## Features
+## Table of Contents
 
-* **Broad Compatibility:**  The library is designed to be compatible with various Arduino boards, including ESP32, ESP32-S3, ESP32-C3, ESP8266.
-* **Yeelight Bulb Support:**  The library supports all Yeelight models that support LAN control.
-* **Comprehensive Control:**  Control the power, brightness, color temperature, RGB color, and color flow of your Yeelight bulbs.
-* **Background Light Support:**  Control the background light (if supported by your bulb).
+- [Features](#features)  
+- [Requirements](#requirements)  
+- [Installation](#installation)  
+- [Quick Start](#quick-start)  
+- [Examples](#examples)  
+- [API Reference](#api-reference)  
+- [Project Structure](#project-structure)  
+- [Testing](#testing)  
+- [Troubleshooting](#troubleshooting)  
+- [Contributing](#contributing)  
+- [License](#license)  
 
-## Getting Started
+## ✨ Features
 
-1. **Install the Library:** The library will be available through the Arduino Library Manager. Simply search for "Yeelight" and install it.
-2. **Include the Library:**  Include the library in your Arduino sketch:
+- SSDP auto‑discovery (UDP 1982)  
+- Power control: on/off/toggle with smooth or sudden effect  
+- Color & temperature: RGB, HSV, CT (1700–6500 K)  
+- Brightness adjustment & color flows (custom or predefined)  
+- Background channel support  
+- Music mode: low‑latency command streaming  
+- Fully async (AsyncTCP/ESPAsyncTCP + FreeRTOS)  
+- Device state caching and query  
+- **Implementation:** see `src/Yeelight.cpp`, `src/Yeelight_enums.h`, `src/Yeelight_structs.h`
 
-```cpp
-#include <Yeelight.h>
+## Requirements
+
+- Arduino IDE ≥ 1.8.10 or PlatformIO  
+- Board: ESP32 (supporting AsyncTCP + FreeRTOS)  
+- Dependencies (Library Manager or lib_deps):  
+  - cJSON  
+  - AsyncTCP / ESPAsyncTCP  
+  - WiFi (built‑in)  
+
+## Installation
+
+### Arduino IDE
+1. Sketch → Include Library → Manage Libraries  
+2. Search "Yeelight" and install **Arduino Yeelight Library**  
+3. In your sketch:
+   ```cpp
+   #include <Yeelight.h>
+   ```
+
+### PlatformIO
+
+Add to `platformio.ini`:
+
+```ini
+[env:your_env]
+platform = espressif32   
+framework = arduino
+board = esp32dev         
+lib_deps =
+  YeelightArduino        
 ```
-Connect to your Yeelight bulb:
+
+## Quick Start
+
+> **Important:** You must first connect to WiFi before establishing a connection with any Yeelight device.
 
 ```cpp
-// Define the Yeelight device's IP address and port
-uint8_t ip[] = {192, 168, 1, 100};  // Replace with your device's IP
-uint16_t port = 55443;
-// Create a Yeelight object
-Yeelight lamp(ip, port);
+#include <WiFi.h>         // or <ESP8266WiFi.h>
+#include <Yeelight.h>
 
-// Check if the connection was successful
-if (lamp.is_connected()) {
-    Serial.println("Connected to the Yeelight device");
-} else {
-    Serial.println("Connection error");
+// Wi‑Fi credentials
+const char* ssid     = "YOUR_SSID";
+const char* password = "YOUR_PASSWORD";
+
+void setup() {
+  Serial.begin(115200);
+  
+  // Step 1: Connect to WiFi first
+  Serial.println("Connecting to WiFi...");
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(100);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected");
+  
+  // Step 2: Connect to Yeelight device
+  // Option 1: Connect using IP
+  uint8_t bulbIP[] = {192, 168, 1, 100};
+  Yeelight bulb(bulbIP);
+  
+  // Option 2: Create instance first, then connect
+  // Yeelight bulb;
+  // bulb.connect(bulbIP);
+
+  if (bulb.is_connected()) {
+    Serial.println("✔ Connected to Yeelight");
+  } else {
+    Serial.println("✖ Failed to connect to Yeelight");
+  }
+
+  // Control examples
+  bulb.turn_on();                         // on
+  bulb.set_color_temp(3000);              // warm white
+  bulb.set_rgb_color(0,255,128);          // teal
+  bulb.set_brightness(75);                // 75%
+  bulb.start_flow(FlowDefault::disco());  // disco flow
+}
+
+void loop() {
+  // your code
 }
 ```
-Start controlling your Yeelight bulb: Refer to the examples below and the documentation for complete control options.
-Examples
-Basic Commands:
-```cpp
-// Turn on the light
-lamp.turn_on();
 
-// Turn off the light
-lamp.turn_off();
+## 📂 Examples
 
-// Set the color to warm white
-lamp.set_color_temp(2700);
+All sketches live under `lib/Yeelight/examples/`. Click to open:
 
-// Set the color to cool white
-lamp.set_color_temp(6500);
+- [Yeelight_Blink](examples/Yeelight_Blink/Yeelight_Blink.ino) – simple on/off every 0.5 s  
+- [Yeelight_White_Basic](examples/Yeelight_White_Basic/Yeelight_White_Basic.ino) – CT & brightness  
+- [Yeelight_White_Transition](examples/Yeelight_White_Transition/Yeelight_White_Transition.ino) – smooth → sudden CT  
+- [Yeelight_RGB_Red](examples/Yeelight_RGB_Red/Yeelight_RGB_Red.ino) – set red + brightness  
+- [Yeelight_RGB_Rainbow](examples/Yeelight_RGB_Rainbow/Yeelight_RGB_Rainbow.ino) – multi‑color transitions  
+- [Yeelight_HSV_Yellow](examples/Yeelight_HSV_Yellow/Yeelight_HSV_Yellow.ino) – HSV mode demo  
+- [Yeelight_HSV_ColorWheel](examples/Yeelight_HSV_ColorWheel/Yeelight_HSV_ColorWheel.ino) – smooth/sudden HSV changes  
+- [Yeelight_Flow_PartyMode](examples/Yeelight_Flow_PartyMode/Yeelight_Flow_PartyMode.ino) – custom Flow start/stop  
+- [Yeelight_TimerOff](examples/Yeelight_TimerOff/Yeelight_TimerOff.ino) – cron on/off  
+- [Yeelight_DelayedTurnOff](examples/Yeelight_DelayedTurnOff/Yeelight_DelayedTurnOff.ino) – auto_delay_off  
+- [Yeelight_ConnectionCheck](examples/Yeelight_ConnectionCheck/Yeelight_ConnectionCheck.ino) – error handling  
+- [Yeelight_BulbStatus](examples/Yeelight_BulbStatus/Yeelight_BulbStatus.ino) – getProp refresh  
+- [Yeelight_BulbFinder](examples/Yeelight_BulbFinder/Yeelight_BulbFinder.ino) – SSDP discovery  
+- [MusicMode](examples/MusicMode/MusicMode.ino) – low‑latency music streaming  
+- [BackgroundControl](examples/BackgroundControl/BackgroundControl.ino) – bg_light power/CT/RGB  
+- [AdjustDemo](examples/AdjustDemo/AdjustDemo.ino) – adjust_brightness/ct/color  
+- [SetDefaultState](examples/SetDefaultState/SetDefaultState.ino) – set_default_state for main/bg  
+- [SetDeviceName](examples/SetDeviceName/SetDeviceName.ino) – set_device_name usage  
+- [Yeelight_ColorScene_Demo](examples/Yeelight_ColorScene_Demo/Yeelight_ColorScene_Demo.ino) – RGB/HSV/CT scene demo  
+- [Yeelight_DevToggle_Demo](examples/Yeelight_DevToggle_Demo/Yeelight_DevToggle_Demo.ino) – toggle main/background/both channels  
+- [Yeelight_Background_Scene](examples/Yeelight_Background_Scene/Yeelight_Background_Scene.ino) – background‑only scene demo  
+- [Yeelight_FlowDefault_Demo](examples/Yeelight_FlowDefault_Demo/Yeelight_FlowDefault_Demo.ino) – predefined FlowDefault patterns  
 
-// Set the brightness to 50%
-lamp.set_brightness(50);
+## API Reference
 
-// Set the color to red
-lamp.set_rgb_color(255, 0, 0);
+Full docs generated by Doxygen (see `doc/html/index.html` or run `doxygen Doxyfile`).  
 
-// Set the color to green
-lamp.set_rgb_color(0, 255, 0);
+## Project Structure
 
-// Set the color to blue
-lamp.set_rgb_color(0, 0, 255);
 ```
-Controlling Color Flows:
-```cpp
-// Create a color flow
-Flow myFlow;
-myFlow.add_rgb(1000, 255, 0, 0);   // Red for 1 second
-myFlow.add_rgb(1000, 0, 255, 0);   // Green for 1 second
-myFlow.add_rgb(1000, 0, 0, 255);   // Blue for 1 second
-
-// Start the color flow
-lamp.start_flow(myFlow);
-
-// Stop the color flow
-lamp.stop_flow();
+lib/Yeelight/
+├─ src/
+│  ├─ Yeelight.h/.cpp
+│  ├─ Yeelight_enums.h
+│  ├─ Yeelight_structs.h
+│  ├─ Flow.h/.cpp
+│  └─ FlowDefault.h/.cpp    # was FlowDefault*.h/.cpp
+├─ examples/
+│  ├─ SimpleBlink/
+│  ├─ ColorCycle/
+│  └─ FlowDemo/
+├─ doc/           ← Doxygen output (html under doc/html)
+└─ README.md
 ```
-Retrieving Device Properties:
-```cpp
-// Retrieve device properties
-lamp.refreshProperties();
 
-// Display properties
-Serial.print("Device Name: ");
-Serial.println(lamp.getProperties().name);
-Serial.print("Light State: ");
-Serial.println(lamp.getProperties().power ? "On" : "Off");
-Serial.print("Brightness: ");
-Serial.println(lamp.getProperties().bright);
-Serial.print("Color Temperature: ");
-Serial.println(lamp.getProperties().ct);
-```
-Adjustment Functions:
-```cpp
-// Increase brightness by 10%
-lamp.adjust_brightness(10);
+## Testing
 
-// Decrease brightness by 10%
-lamp.adjust_brightness(-10);
+- Tested on ESP32, ESP8266 boards  
+- Verified basic commands, flows, music mode  
+- CI with PlatformIO (add your tests under `test/`)  
 
-// Increase color temperature by 10%
-lamp.adjust_color_temp(10);
+## Troubleshooting
 
-// Decrease color temperature by 10%
-lamp.adjust_color_temp(-10);
-```
-### Documentation
-For complete documentation of the library, please refer to the Doxygen documentation generated from the header files.
-### Testing
-This library has been tested with the following hardware and software:
-* Arduino Boards: ESP32, ESP32-S3, ESP32-C3, ESP8266
-* Yeelight Bulbs: All Yeelight products that support LAN control  
-### Future Updates
-Here are some features that are planned for future updates to the library:
-* Predefined Color Flows: Include a set of pre-defined color flows, like "Disco," "Sunrise," "Sunset," etc.
-* Customizable Color Flows: Allow users to define their own custom color flows using a more flexible API.
-* Flow Generation: Add functions to generate color flows based on specific parameters (color, brightness, duration, etc.).
-* Light Group Control: Support controlling multiple Yeelight bulbs as a group.
-### Contributions
-Contributions are welcome! Open an issue or submit a pull request.
-### License
-This library is licensed under the [license] - see the LICENSE file for details.
+- **Discovery fails**: ensure UDP 1982 open on LAN  
+- **Timeouts**: enable LAN Control in Yeelight app  
+- **Music mode issues**: allow TCP port 55443 inbound  
+- **Can't connect to device**: make sure your ESP is connected to WiFi first
+
+## Contributing
+
+1. Fork repo  
+2. Create branch: `git checkout -b feature/XYZ`  
+3. Commit: `git commit -m "Add XYZ"`  
+4. Push & open PR  
+
+Please follow code style and include tests/examples.
+
+## License
+
+MIT © Your Name. See [LICENSE](LICENSE)
