@@ -27,19 +27,10 @@ void Flow::add_sleep(const uint32_t duration) {
 }
 
 void Flow::add_hsv(const uint32_t duration, const uint16_t hue, const uint8_t sat, const uint8_t brightness) {
-    float H = fmod(hue, 360.0);
-    if (H < 0.0) {
-        H += 360.0;
-    }
-    const float S = static_cast<float>(sat) / 255.0f;
-    uint8_t brightness_clamped;
-    if (brightness < 0) {
-        brightness_clamped = 0;
-    } else if (brightness > 100) {
-        brightness_clamped = 100;
-    } else {
-        brightness_clamped = static_cast<uint8_t>(brightness);
-    }
+    float H = fmod(hue, 360.0f);
+    if (H < 0.0f) H += 360.0f;
+    const float S = static_cast<float>(sat) / 100.0f;
+    uint8_t brightness_clamped = brightness > 100 ? 100 : brightness;
     const float V = static_cast<float>(brightness_clamped) / 100.0f;
     const float C = V * S;
     const float H_prime = H / 60.0f;
@@ -81,17 +72,12 @@ void Flow::add_hsv(const uint32_t duration, const uint16_t hue, const uint8_t sa
     const auto r = static_cast<uint8_t>(std::round(R));
     const auto g = static_cast<uint8_t>(std::round(G));
     const auto b = static_cast<uint8_t>(std::round(B));
-    const float brightness_calc = 0.299f * r + 0.587f * g + 0.114f * b;
-    const auto bright = static_cast<uint8_t>(std::round((brightness_calc / 255.0) * 100.0));
+    const auto bright = brightness_clamped;
     add_rgb(duration, r, g, b, bright);
 }
 
 void Flow::add_expression(const flow_expression &expression) {
     flow.push_back(expression);
-}
-
-std::vector<flow_expression> Flow::get_flow() {
-    return flow;
 }
 
 void Flow::clear() {
@@ -143,7 +129,7 @@ uint8_t Flow::get_count() const {
     return count;
 }
 
-uint8_t Flow::get_size() const {
+size_t Flow::get_size() const {
     return flow.size();
 }
 

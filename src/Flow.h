@@ -76,7 +76,7 @@ public:
      * 
      * @return The vector of flow expressions.
      */
-    std::vector<flow_expression> get_flow();
+    std::vector<flow_expression> get_flow() const;
 
     /**
      * @brief Clears the flow, removing all flow expressions.
@@ -151,7 +151,7 @@ public:
      *
      * @return The size of the object.
      */
-    uint8_t get_size() const;
+    size_t get_size() const;
 
     /**
      * @brief Retrieves the current flow action.
@@ -171,8 +171,6 @@ public:
      * @param new_action The new action to be set for the flow.
      */
     void setAction(flow_action new_action);
-
-    std::vector<flow_expression> get_flow() const;
 };
 
 #endif
