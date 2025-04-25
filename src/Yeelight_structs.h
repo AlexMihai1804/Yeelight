@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include "Yeelight_enums.h" // Include this to resolve flow_mode reference
 
 /**
  * @brief Struct representing a flow expression for controlling Yeelight devices.
