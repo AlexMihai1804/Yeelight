@@ -1037,7 +1037,7 @@ public:
      * @param lightType The light channel to target (main, background, or auto-detect).
      * @return The response type indicating success or failure.
      */
-    ResponseType start_flow(Flow flow, LightType lightType = AUTO);
+    ResponseType start_flow(const Flow& flow, LightType lightType = AUTO);
 
     /**
      * @brief Stops any currently running color flow effect.
@@ -1052,7 +1052,7 @@ public:
      * @param lightType The light channel to target.
      * @return The response type indicating success or failure.
      */
-    ResponseType set_scene_flow(Flow flow, LightType lightType = AUTO);
+    ResponseType set_scene_flow(const Flow& flow, LightType lightType = AUTO);
 
     //
     // 8) TIMERS AND DEFAULT STATES

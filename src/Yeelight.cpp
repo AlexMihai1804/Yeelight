@@ -157,7 +157,7 @@ ResponseType Yeelight::connect() {
     client->onConnect([](void *arg, AsyncClient *c) {
         auto *that = static_cast<Yeelight *>(arg);
         that->connecting = false;
-        that->onMainClientConnect(c);
+        onMainClientConnect(c);
     }, this);
     client->onDisconnect([](void *arg, const AsyncClient *c) {
         auto *that = static_cast<Yeelight *>(arg);
@@ -1502,7 +1502,7 @@ ResponseType Yeelight::set_music_command(const bool power, const uint8_t *host, 
     return send_command("set_music", params);
 }
 
-ResponseType Yeelight::start_flow(Flow flow, const LightType lightType) {
+ResponseType Yeelight::start_flow(const Flow& flow, const LightType lightType) {
     if (!supported_methods.start_cf && !supported_methods.bg_start_cf) {
         return METHOD_NOT_SUPPORTED;
     }
@@ -2433,7 +2433,7 @@ ResponseType Yeelight::bg_stop_cf_command() {
     return send_command("bg_stop_cf", params);
 }
 
-ResponseType Yeelight::set_scene_flow(Flow flow, const LightType lightType) {
+ResponseType Yeelight::set_scene_flow(const Flow& flow, const LightType lightType) {
     if (!supported_methods.set_scene && !supported_methods.bg_set_scene) {
         return METHOD_NOT_SUPPORTED;
     }
