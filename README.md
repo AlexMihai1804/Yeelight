@@ -1,4 +1,4 @@
-[![PlatformIO Registry](https://img.shields.io/badge/PlatformIO-Yeelight-blue)](https://registry.platformio.org/libraries/alexmihai1804/Yeelight)
+[![PlatformIO Registry](https://badges.registry.platformio.org/packages/alexmihai1804/library/Yeelight.svg)](https://registry.platformio.org/libraries/alexmihai1804/Yeelight)
 [![Arduino Library](https://img.shields.io/badge/Arduino%20Library-Yeelight-blue)](https://docs.arduino.cc/libraries/yeelight/)
 ![Version](https://img.shields.io/badge/Version-1.2.0-blue.svg)
 # Arduino Yeelight Library
