@@ -35,7 +35,7 @@ A fully asynchronous Arduino/PlatformIO library for discovering and controlling 
 - Board: ESP32 (supporting AsyncTCP + FreeRTOS)  
 - Dependencies (Library Manager or lib_deps):  
   - cJSON  
-  - AsyncTCP / ESPAsyncTCP  
+  - AsyncTCP  
   - WiFi (built‑in)  
 
 ## Installation
@@ -68,7 +68,7 @@ lib_deps =
 > **Important:** You must first connect to WiFi before establishing a connection with any Yeelight device.
 
 ```cpp
-#include <WiFi.h>         // or <ESP8266WiFi.h>
+#include <WiFi.h>
 #include <Yeelight.h>
 
 // Wi‑Fi credentials
@@ -161,7 +161,7 @@ lib/Yeelight/
 
 ## Testing
 
-- Tested on ESP32, ESP8266 boards  
+- Tested on ESP32 boards  
 - Verified basic commands, flows, music mode  
 - CI with PlatformIO (add your tests under `test/`)  
 
