@@ -1,3 +1,7 @@
+/**
+ * @file Flow.h
+ * @brief Defines the Flow class which encapsulates a sequence of light‐effect expressions.
+ */
 #ifndef YEELIGHTARDUINO_FLOW_H
 #define YEELIGHTARDUINO_FLOW_H
 
@@ -62,6 +66,16 @@ public:
      */
     void add_sleep(uint32_t duration);
 
+    /**
+     * @brief Adds an HSV color effect to the flow.
+     *
+     * Converts an HSV specification into an RGB flow_expression and appends it.
+     *
+     * @param duration   Duration of the effect in milliseconds.
+     * @param hue        Hue angle in degrees (0–359).
+     * @param sat        Saturation percentage (0–100).
+     * @param brightness Brightness percentage (0–100).
+     */
     void add_hsv(uint32_t duration, uint16_t hue, uint8_t sat, uint8_t brightness);
 
     /**
@@ -147,9 +161,9 @@ public:
     uint8_t get_count() const;
 
     /**
-     * @brief Returns the size of the object.
+     * @brief Returns how many flow expressions are currently in the sequence.
      *
-     * @return The size of the object.
+     * @return Number of flow_expression entries in this Flow.
      */
     size_t get_size() const;
 

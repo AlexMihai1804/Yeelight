@@ -1,5 +1,10 @@
+/**
+ * @file FlowTransitions.h
+ * @brief Static methods producing standard flow_expression sequences (disco, pulse, police, etc.).
+ */
 #ifndef YEELIGHTARDUINO_FLOWTRANSITIONS_H
 #define YEELIGHTARDUINO_FLOWTRANSITIONS_H
+
 #include <Flow.h>
 
 /**

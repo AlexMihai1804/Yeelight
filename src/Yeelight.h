@@ -95,18 +95,25 @@ private:
      */
     bool music_mode;
 
-    /**
-     * @brief A flag indicating whether the device connection is being closed manually.
-     */
+    /** @brief Indicates manual closure of the main client. */
     bool closingManually = false;
+    /** @brief Flag set once supported methods have been fetched. */
     bool refreshedMethods = false;
+    /** @brief Host IP for music‐mode server. */
     uint8_t music_host[4]{};
+    /** @brief Port for music‐mode communication. */
     uint16_t music_port{};
+    /** @brief Number of retries when connecting music client. */
     uint8_t music_retry_count{};
+    /** @brief Maximum allowed music‐mode retries. */
     const uint8_t max_music_retries = 5;
+    /** @brief Internal flag when switching back to normal mode. */
     bool is_switching_to_normal = false;
+    /** @brief Mutex protecting the static devices map. */
     static SemaphoreHandle_t devices_mutex;
+    /** @brief Indicates whether a connection attempt is in progress. */
     bool connecting = false;
+    /** @brief Semaphore used for music‐mode handshake. */
     SemaphoreHandle_t music_sem = nullptr;
 
 
@@ -123,11 +130,42 @@ private:
     //---------------------------------------------------------------------------------------------------------
     // PRIVATE METHODS
     //---------------------------------------------------------------------------------------------------------
+    /**
+     * @brief Called when the main TCP client successfully connects.
+     * @param c Pointer to the connected client.
+     */
     static void onMainClientConnect(AsyncClient *c);
 
+    /**
+     * @brief Handles errors on the main TCP client.
+     * @param c Pointer to the client reporting the error.
+     * @param error The error code.
+     */
     void onMainClientError(AsyncClient *c, int8_t error);
 
+    /**
+     * @brief Safely inserts or updates this instance in the static devices map.
+     * @param ip32 The 32‑bit representation of the device IP address.
+     */
     void safeInsertDevice(uint32_t ip32);
+
+    /**
+     * @brief Called when a new music‑mode client connection is established.
+     * @param c Pointer to the newly connected music‑mode client.
+     */
+    void onMusicConnect(AsyncClient *c);
+
+    /**
+     * @brief Timer callback to delete an AsyncClient after a short delay.
+     * @param xTimer The FreeRTOS timer handle.
+     */
+    static void deleteClientCallback(TimerHandle_t xTimer);
+
+    /**
+     * @brief Schedules deferred deletion of a client to avoid race conditions.
+     * @param c The AsyncClient instance to delete.
+     */
+    static void scheduleDeleteClient(AsyncClient *c);
 
     /**
      * @brief Callback triggered when the main client is disconnected.
@@ -140,12 +178,6 @@ private:
      * @param c A pointer to the disconnected client.
      */
     void onMusicDisconnect(const AsyncClient *c);
-
-    void onMusicConnect(AsyncClient *c);
-
-    static void deleteClientCallback(TimerHandle_t xTimer);
-
-    static void scheduleDeleteClient(AsyncClient *c);
 
     /**
      * @brief Callback for handling a new inbound client connection in music mode.
@@ -1127,7 +1159,7 @@ public:
 
     /**
      * @brief Adjusts the color by a specified percentage.
-     * @param percentage The percentage to adjust the color (negative to shift in the opposite direction).
+     * @param percentage The percentage to adjust the color (negative to shift in opposite direction).
      * @param lightType The light channel to target.
      * @return The response type indicating success or failure.
      */
@@ -1135,7 +1167,7 @@ public:
 
     /**
      * @brief Adjusts the color by a specified percentage over a given duration.
-     * @param percentage The percentage to adjust the color (negative to shift in the opposite direction).
+     * @param percentage The percentage to adjust the color (negative to shift in opposite direction).
      * @param duration The duration in milliseconds.
      * @param lightType The light channel to target.
      * @return The response type indicating success or failure.

@@ -1,3 +1,7 @@
+/**
+ * @file Yeelight_structs.h
+ * @brief Defines Yeelight‐related POD structs: flow_expression, SupportedMethods, YeelightDevice, YeelightProperties.
+ */
 #ifndef YEELIGHTARDUINO_YEELIGHT_STRUCTS_H
 #define YEELIGHTARDUINO_YEELIGHT_STRUCTS_H
 

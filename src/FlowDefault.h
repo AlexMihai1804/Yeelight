@@ -1,5 +1,10 @@
+/**
+ * @file FlowDefault.h
+ * @brief Predefined lighting flow modes (disco, strobe, sunrise, etc.) returning configured Flow instances.
+ */
 #ifndef FLOWDEFAULT_H
 #define FLOWDEFAULT_H
+
 #include <Flow.h>
 
 /**
