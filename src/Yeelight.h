@@ -124,8 +124,11 @@ private:
     // PRIVATE METHODS
     //---------------------------------------------------------------------------------------------------------
     static void onMainClientConnect(AsyncClient *c);
-    void onMainClientError (AsyncClient *c, int8_t error);
+
+    void onMainClientError(AsyncClient *c, int8_t error);
+
     void safeInsertDevice(uint32_t ip32);
+
     /**
      * @brief Callback triggered when the main client is disconnected.
      * @param c A pointer to the disconnected client.
