@@ -30,7 +30,7 @@ void Flow::add_hsv(const uint32_t duration, const uint16_t hue, const uint8_t sa
     float H = fmod(hue, 360.0f);
     if (H < 0.0f) H += 360.0f;
     const float S = static_cast<float>(sat) / 100.0f;
-    uint8_t brightness_clamped = brightness > 100 ? 100 : brightness;
+    const uint8_t brightness_clamped = brightness > 100 ? 100 : brightness;
     const float V = static_cast<float>(brightness_clamped) / 100.0f;
     const float C = V * S;
     const float H_prime = H / 60.0f;

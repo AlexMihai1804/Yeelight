@@ -7,16 +7,16 @@ AsyncServer *Yeelight::music_mode_server = nullptr;
 SemaphoreHandle_t Yeelight::devices_mutex = nullptr;
 static SemaphoreHandle_t responses_mutex = nullptr;
 
-static inline void lockResponses() {
+static void lockResponses() {
     xSemaphoreTake(responses_mutex, portMAX_DELAY);
 }
 
-static inline void unlockResponses() {
+static void unlockResponses() {
     xSemaphoreGive(responses_mutex);
 }
 
 Yeelight::Yeelight() : port(0), supported_methods(), timeout(7000), max_retry(5), properties(), response_id(1),
-                       music_mode(false), connecting(false) {
+                       music_mode(false) {
     memset(ip, 0, sizeof(ip));
     if (!devices_mutex) {
         devices_mutex = xSemaphoreCreateMutex();
@@ -30,8 +30,7 @@ Yeelight::Yeelight() : port(0), supported_methods(), timeout(7000), max_retry(5)
 }
 
 Yeelight::Yeelight(const uint8_t ip[4], const uint16_t port) : port(port), supported_methods(), timeout(7000),
-                                                               max_retry(3), response_id(1), music_mode(false),
-                                                               connecting(false) {
+                                                               max_retry(3), response_id(1), music_mode(false) {
     memcpy(this->ip, ip, 4);
     if (!devices_mutex) {
         devices_mutex = xSemaphoreCreateMutex();
@@ -57,8 +56,7 @@ Yeelight::Yeelight(const uint8_t ip[4], const uint16_t port) : port(port), suppo
 }
 
 Yeelight::Yeelight(const YeelightDevice &device) : port(device.port), supported_methods(device.supported_methods),
-                                                   timeout(7000), max_retry(3), response_id(1), music_mode(false),
-                                                   connecting(false) {
+                                                   timeout(7000), max_retry(3), response_id(1), music_mode(false) {
     memcpy(ip, device.ip, 4);
     if (!devices_mutex) {
         devices_mutex = xSemaphoreCreateMutex();
@@ -96,7 +94,7 @@ Yeelight::~Yeelight() {
     }
     const uint32_t ip32 = ip[0] << 24 | ip[1] << 16 | ip[2] << 8 | ip[3];
     if (xSemaphoreTake(devices_mutex, portMAX_DELAY) == pdTRUE) {
-        auto it = devices.find(ip32);
+        const auto it = devices.find(ip32);
         if (it != devices.end() && it->second == this) {
             devices.erase(it);
         }
@@ -113,7 +111,7 @@ ResponseType Yeelight::checkResponse(const uint16_t id) {
         lockResponses();
         auto it = responses.find(id);
         if (it != responses.end()) {
-            ResponseType r = it->second;
+            const ResponseType r = it->second;
             responses.erase(it);
             unlockResponses();
             return r;
@@ -127,9 +125,9 @@ ResponseType Yeelight::checkResponse(const uint16_t id) {
     return TIMEOUT;
 }
 
-inline void Yeelight::safeInsertDevice(uint32_t ip32) {
+inline void Yeelight::safeInsertDevice(const uint32_t ip32) {
     if (xSemaphoreTake(devices_mutex, portMAX_DELAY) == pdTRUE) {
-        auto old = devices.find(ip32);
+        const auto old = devices.find(ip32);
         if (old != devices.end() && old->second != this) {
             devices.erase(old);
         }
@@ -163,14 +161,14 @@ ResponseType Yeelight::connect() {
         auto *that = static_cast<Yeelight *>(arg);
         that->onMainClientDisconnect(c);
     }, this);
-    client->onError([](void *arg, AsyncClient *c, int8_t error) {
+    client->onError([](void *arg, AsyncClient *c, const int8_t error) {
         auto *that = static_cast<Yeelight *>(arg);
         that->onMainClientError(c, error);
     }, this);
-    client->onData([](void *arg, AsyncClient *c, const void *d, size_t l) {
+    client->onData([](void *arg, AsyncClient *c, const void *d, const size_t l) {
         static_cast<Yeelight *>(arg)->onData(c, d, l);
     }, this);
-    IPAddress devIP(ip[0], ip[1], ip[2], ip[3]);
+    const IPAddress devIP(ip[0], ip[1], ip[2], ip[3]);
     if (!client->connect(devIP, port)) {
         delete client;
         client = nullptr;
@@ -269,7 +267,7 @@ void Yeelight::onMainClientConnect(AsyncClient *c) {
     Serial.println("Main socket connected");
 }
 
-void Yeelight::onMainClientError(AsyncClient *c, int8_t error) {
+void Yeelight::onMainClientError(AsyncClient *c, const int8_t error) {
     Serial.printf("AsyncClient error %d\n", error);
     connecting = false;
 }
@@ -336,7 +334,7 @@ void Yeelight::handleNewClient(void *arg, AsyncClient *client) {
     const uint32_t remoteIP32 = remoteIP[0] << 24 | remoteIP[1] << 16 | remoteIP[2] << 8 | remoteIP[3];
     Yeelight *y = nullptr;
     if (xSemaphoreTake(Yeelight::devices_mutex, portMAX_DELAY) == pdTRUE) {
-        auto it = devices.find(remoteIP32);
+        const auto it = devices.find(remoteIP32);
         if (it != devices.end()) {
             y = it->second;
             Serial.printf("Client from IP %u.%u.%u.%u associated with Yeelight instance %p\n",
@@ -360,7 +358,7 @@ void Yeelight::handleNewClient(void *arg, AsyncClient *client) {
         auto *that = static_cast<Yeelight *>(arg2);
         that->onMusicDisconnect(c);
     }, y);
-    client->onData([](void *arg2, AsyncClient *c, const void *data, size_t len) {
+    client->onData([](void *arg2, AsyncClient *c, const void *data, const size_t len) {
         auto *that = static_cast<Yeelight *>(arg2);
         that->onData(c, data, len);
     }, y);
